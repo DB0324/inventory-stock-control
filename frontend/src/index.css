@@ -1,0 +1,4 @@
+/* Tailwind v4: one import, no config file, no PostCSS chain. The old v3
+   @tailwind base/components/utilities triple is gone -- if a tutorial tells
+   you to write those, it is out of date. */
+@import "tailwindcss";
