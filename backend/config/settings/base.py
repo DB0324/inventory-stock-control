@@ -37,8 +37,9 @@ THIRD_PARTY_APPS = [
 ]
 
 LOCAL_APPS = [
-    # apps.accounts, apps.catalog, apps.stock -- added in Phase 1
     "apps.accounts",
+    "apps.catalog",
+    "apps.stock",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
