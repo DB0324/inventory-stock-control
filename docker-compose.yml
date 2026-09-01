@@ -1,0 +1,18 @@
+# Postgres for the test suite only. The app talks to Neon; tests talk to this.
+# Same major version as Neon so pg_trgm, triggers, advisory locks and partial
+# indexes behave identically -- Phase 0 verified them on the real host, and
+# this matches that engine.
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: inventory
+      POSTGRES_PASSWORD: inventory
+      POSTGRES_DB: inventory
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
