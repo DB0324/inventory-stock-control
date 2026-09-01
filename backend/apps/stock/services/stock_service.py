@@ -81,8 +81,6 @@ def _lock(item_id: int, *location_ids: int) -> None:
         for location_id in sorted(set(location_ids)):
             key = (item_id * 100_003 + location_id) % 2_147_483_647
             cur.execute("SELECT pg_advisory_xact_lock(%s, %s)", [LOCK_NAMESPACE, key])
-
-
 def _write(*, item, kind, quantity, actor, entries, location=None,
            source=None, destination=None, reason=None, note=""):
     """Insert one movement and its entries. Assumes locks are already held."""
