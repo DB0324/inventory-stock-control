@@ -40,6 +40,7 @@ LOCAL_APPS = [
     "apps.accounts",
     "apps.catalog",
     "apps.stock",
+    "apps.api",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -48,6 +49,28 @@ AUTH_USER_MODEL = "accounts.User"
 
 SILENCED_SYSTEM_CHECKS = ["auth.E003"]
 
+# --- DRF -----------------------------------------------------------------
+# Session auth, not tokens (ADR-007). The cookie is HttpOnly, so an XSS bug
+# cannot read it, and logout revokes server-side immediately.
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.SessionAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 25,
+    "UNAUTHENTICATED_USER": None,
+    "EXCEPTION_HANDLER": "apps.api.exception_handler.handler",
+}
+
+# DRF returns 403 for unauthenticated requests when SessionAuthentication is
+# the only backend, because it has no WWW-Authenticate header to send. An SPA
+# needs to tell "log in" apart from "you may not do that", so we force 401.
+REST_FRAMEWORK["DEFAULT_AUTHENTICATION_CLASSES"] = [
+    "apps.api.authentication.CsrfSessionAuthentication",
+]
 
 MIDDLEWARE = [
     # CorsMiddleware must precede CommonMiddleware so preflight responses
