@@ -1,26 +1,25 @@
-import { Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Route, Routes } from "react-router-dom";
 
-// Placeholder. The real routes land in Phase 6 -- this exists so that the
-// router, the query client and Tailwind can all be verified as working
-// before any of them have real screens to hide behind.
-function Home() {
-  return (
-    <main className="mx-auto max-w-xl p-8">
-      <h1 className="text-2xl font-semibold text-slate-900">
-        Inventory &amp; Stock Control
-      </h1>
-      <p className="mt-2 text-slate-600">
-        Frontend scaffold is up. If this text is spaced and styled, Tailwind is
-        compiling.
-      </p>
-    </main>
-  )
-}
+import { AuthProvider } from "./auth/AuthContext";
+import { RequireAuth } from "./auth/guards";
+import Home from "./pages/Home";
+import Login from "./pages/Login";
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/" element={<Home />} />
-    </Routes>
-  )
+    <BrowserRouter>
+      {/* AuthProvider sits inside the router because the guards it feeds use
+          useLocation, and that only works below a Router. */}
+      <AuthProvider>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          {/* Everything nested under RequireAuth is gated. Adding a screen
+              later means adding one <Route> here, not another guard. */}
+          <Route element={<RequireAuth />}>
+            <Route path="/" element={<Home />} />
+          </Route>
+        </Routes>
+      </AuthProvider>
+    </BrowserRouter>
+  );
 }
