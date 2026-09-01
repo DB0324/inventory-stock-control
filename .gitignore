@@ -23,3 +23,5 @@ htmlcov/
 staticfiles/
 *.sqlite3
 media/
+
+cookies.txt

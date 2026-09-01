@@ -23,8 +23,8 @@ def test_anonymous_gets_401_not_302(client):
     assert response.status_code == 401
 
 
-def test_healthz_is_public(client):
-    assert client.get("/healthz/").status_code == 200
+# def test_healthz_is_public(client):
+#     assert client.get("/healthz/").status_code == 200
     
 def test_healthz_is_public(client, db):
     """Needs the db fixture: healthz deliberately touches the database, since
