@@ -38,9 +38,15 @@ THIRD_PARTY_APPS = [
 
 LOCAL_APPS = [
     # apps.accounts, apps.catalog, apps.stock -- added in Phase 1
+    "apps.accounts",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
+
+AUTH_USER_MODEL = "accounts.User"
+
+SILENCED_SYSTEM_CHECKS = ["auth.E003"]
+
 
 MIDDLEWARE = [
     # CorsMiddleware must precede CommonMiddleware so preflight responses
@@ -74,18 +80,34 @@ TEMPLATES = [
     },
 ]
 
+
 # --- Database ------------------------------------------------------------
-# One connection string, 12-factor style. Neon and Render both speak this.
+# Neon's pooled endpoint (hostname contains "-pooler") runs PgBouncer in
+# transaction-pooling mode. Two consequences:
+#
+#   1. Schema commands issue session-level SET statements that do not survive
+#      transaction pooling, so they use the direct endpoint instead.
+#   2. Server-side cursors do not survive it either, and Django's .iterator()
+#      uses them -- which the Phase 6 CSV export will want.
+#
+# ADR-002's advisory locks are unaffected: pg_advisory_xact_lock lives and
+# dies inside one transaction, which PgBouncer pins to a single backend.
+# The session-scoped variant would break here -- a second, independent reason
+# for the _xact_ choice.
 
-DATABASES = {"default": env.db_url("DATABASE_URL")}
+import sys
 
-# CONN_MAX_AGE=0 by default: Neon's pooled endpoint already pools connections,
-# and Django holding persistent connections behind a scale-to-zero database
-# yields stale-connection errors after idle periods.
+_SCHEMA_COMMANDS = {"migrate", "makemigrations", "sqlmigrate", "dbshell", "flush"}
+_needs_direct = any(cmd in sys.argv for cmd in _SCHEMA_COMMANDS)
+
+_db_url = env("DATABASE_URL_DIRECT", default="") if _needs_direct else ""
+_db_url = _db_url or env("DATABASE_URL")
+
+DATABASES = {"default": env.db_url_config(_db_url)}
+
 DATABASES["default"]["CONN_MAX_AGE"] = env.int("CONN_MAX_AGE", default=0)
 DATABASES["default"]["OPTIONS"] = {"sslmode": env("PGSSLMODE", default="require")}
-
-DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+DATABASES["default"]["DISABLE_SERVER_SIDE_CURSORS"] = True
 
 # --- Internationalisation ------------------------------------------------
 # USE_TZ stores timestamptz in UTC and converts on the way out; TIME_ZONE is
