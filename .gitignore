@@ -10,3 +10,16 @@ venv/
 .env.*.local
 *.log
 .DS_Store
+
+# Python
+.venv/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Django
+staticfiles/
+*.sqlite3
+media/

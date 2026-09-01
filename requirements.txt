@@ -1,0 +1,16 @@
+# Framework
+Django==6.0.8
+djangorestframework==3.18.0
+
+# Database driver + connection-string parsing
+psycopg[binary]==3.3.4
+
+# Configuration from environment (12-factor)
+django-environ==0.14.0
+
+# Cross-origin requests from the React client (ADR-007)
+django-cors-headers==4.9.0
+
+# Production serving
+gunicorn==23.0.0
+whitenoise==6.11.0
