@@ -1,6 +1,5 @@
 from rest_framework import viewsets
 
-from apps.api.permissions import IsManager
 from apps.api.serializers import LocationSerializer
 from apps.api.views.catalog import ManagerWritesMixin
 from apps.stock.models import Location

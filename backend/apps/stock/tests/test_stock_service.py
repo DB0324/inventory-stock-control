@@ -6,7 +6,7 @@ does not raise -- it produces a plausible number that is wrong forever.
 
 import pytest
 
-from apps.stock.models import LedgerEntry, MovementKind, StockMovement
+from apps.stock.models import LedgerEntry, StockMovement
 from apps.stock.services import stock_service as ss
 from apps.stock.services.exceptions import (
     InsufficientStock, ItemArchived, LocationNotAssigned,

@@ -1,7 +1,6 @@
 from rest_framework import serializers
 from apps.catalog.models import Category, Item, ItemTimelineEvent
-from apps.stock.models import StockMovement
-from apps.stock.models import Location
+from apps.stock.models import Location, StockMovement
 
 
 class LocationBriefSerializer(serializers.ModelSerializer):
@@ -39,10 +38,6 @@ class MeSerializer(serializers.Serializer):
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(style={"input_type": "password"})
-    
-    
-from apps.catalog.models import Category, Item, ItemTimelineEvent
-from apps.stock.models import StockMovement
 
 
 class CategorySerializer(serializers.ModelSerializer):

@@ -8,7 +8,7 @@ noise between the assertion and the thing being asserted.
 import pytest
 
 from apps.api.filters import apply_filters
-from apps.catalog.models import Category, Item
+from apps.catalog.models import Item
 from apps.stock.services import stock_service as ss
 
 

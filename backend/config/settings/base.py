@@ -5,6 +5,7 @@ that does belongs in dev.py or prod.py -- see ADR-007, where the cross-origin
 cookie settings are the reason this split exists.
 """
 
+import sys
 from pathlib import Path
 
 import environ
@@ -118,8 +119,6 @@ TEMPLATES = [
 # dies inside one transaction, which PgBouncer pins to a single backend.
 # The session-scoped variant would break here -- a second, independent reason
 # for the _xact_ choice.
-
-import sys
 
 _SCHEMA_COMMANDS = {"migrate", "makemigrations", "sqlmigrate", "dbshell", "flush"}
 _needs_direct = any(cmd in sys.argv for cmd in _SCHEMA_COMMANDS)
