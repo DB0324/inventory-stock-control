@@ -8,6 +8,10 @@ import type {
 
 export const inventory = {
   categories: () => api.get<Paginated<Category>>("/api/categories/"),
+  createCategory: (name: string) =>
+    api.post<Category>("/api/categories/", { name }),
+  renameCategory: (id: number, name: string) =>
+    api.patch<Category>(`/api/categories/${id}/`, { name }),
   locations: () => api.get<Paginated<Location>>("/api/locations/"),
 
   items: (params: URLSearchParams) =>

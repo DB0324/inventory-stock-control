@@ -5,7 +5,7 @@ note on Item below, that omission is the whole point.
 """
 
 from django.db import models
-from django.db.models.functions import Coalesce, Upper
+from django.db.models.functions import Coalesce, Lower, Upper
 from django.conf import settings
 from apps.stock.models import ImmutableModel
 
@@ -16,7 +16,11 @@ class Category(models.Model):
     within a week, and then no report can be trusted.
     """
 
-    name = models.CharField(max_length=80, unique=True)
+    # Not unique=True. That index is case-sensitive, so it would happily
+    # accept "Fasteners" and "fasteners" as two rows -- the precise drift the
+    # docstring above says this table exists to prevent. The functional index
+    # in Meta is the one that actually enforces it.
+    name = models.CharField(max_length=80)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -24,6 +28,11 @@ class Category(models.Model):
         db_table = "catalog_category"
         ordering = ["name"]
         verbose_name_plural = "categories"
+        constraints = [
+            models.UniqueConstraint(
+                Lower("name"), name="category_name_unique_ci"
+            ),
+        ]
 
     def __str__(self):
         return self.name

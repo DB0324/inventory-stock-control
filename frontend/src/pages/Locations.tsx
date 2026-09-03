@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 
 import { ApiError } from "../api/client";
 import { inventory } from "../api/inventory";
-import type { Staff } from "../types/api";
+import type { Category, Staff } from "../types/api";
 
 /** Goal 5's manager screen: who may record movements where.
  *
@@ -83,6 +84,8 @@ export default function Locations() {
           nothing to grant or revoke.
         </p>
       </div>
+
+      <Categories />
 
       <section className="space-y-2">
         <h2 className="text-sm font-medium text-zinc-700">Locations</h2>
@@ -196,5 +199,159 @@ export default function Locations() {
         </div>
       )}
     </div>
+  );
+}
+
+
+/** Goal 2's other half: categories are "a short list that managers maintain".
+ *
+ * It lives on this page rather than getting its own nav entry because it is
+ * the same kind of thing as the tables above -- a small reference list only a
+ * manager touches -- and the navigation is already carrying six links.
+ *
+ * Add and rename, but no delete. Every item points at a category, so removing
+ * one either orphans items or cascades into them, and neither is something a
+ * stray click should be able to do. Renaming covers the real case (a typo, a
+ * change of vocabulary) and, because items reference the row rather than the
+ * text, it updates everywhere at once.
+ */
+function Categories() {
+  const queryClient = useQueryClient();
+  const [name, setName] = useState("");
+
+  const categories = useQuery({
+    queryKey: ["categories"],
+    queryFn: inventory.categories,
+  });
+
+  // One invalidation for both mutations. The item form's dropdown reads this
+  // same query, so a category added here is selectable there without a reload.
+  const refresh = () =>
+    queryClient.invalidateQueries({ queryKey: ["categories"] });
+
+  const add = useMutation({
+    mutationFn: (value: string) => inventory.createCategory(value),
+    onSuccess: () => {
+      setName("");
+      refresh();
+    },
+  });
+
+  const rename = useMutation({
+    mutationFn: ({ id, value }: { id: number; value: string }) =>
+      inventory.renameCategory(id, value),
+    onSuccess: refresh,
+  });
+
+  const rows = categories.data?.results ?? [];
+  const error = add.error ?? rename.error;
+
+  return (
+    <section className="space-y-2">
+      <h2 className="text-sm font-medium text-zinc-700">Categories</h2>
+
+      <div className="rounded-md border border-zinc-200 bg-white">
+        <ul className="divide-y divide-zinc-100">
+          {rows.map((category) => (
+            <CategoryRow
+              key={category.id}
+              category={category}
+              busy={rename.isPending}
+              onRename={(value) => rename.mutate({ id: category.id, value })}
+            />
+          ))}
+          {rows.length === 0 && !categories.isLoading && (
+            <li className="px-3 py-6 text-center text-sm text-zinc-500">
+              No categories yet. Items need one, so add the first below.
+            </li>
+          )}
+        </ul>
+
+        <form
+          className="flex gap-2 border-t border-zinc-100 p-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const trimmed = name.trim();
+            if (trimmed) add.mutate(trimmed);
+          }}
+        >
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="New category"
+            aria-label="New category name"
+            className="flex-1 rounded-md border border-zinc-300 px-3 py-1.5 text-sm"
+          />
+          <button
+            type="submit"
+            disabled={!name.trim() || add.isPending}
+            className="rounded-md bg-accent-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-accent-700 disabled:bg-zinc-300"
+          >
+            {add.isPending ? "Adding…" : "Add"}
+          </button>
+        </form>
+      </div>
+
+      {error && (
+        <div
+          role="alert"
+          className="rounded-sm bg-danger-50 px-3 py-2 text-sm text-danger-700"
+        >
+          {/* The common failure is a duplicate name, which the unique
+              constraint turns into a 400 with a usable message. */}
+          {error instanceof ApiError ? error.message : "Could not save that."}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** A row that edits in place.
+ *
+ * The draft lives here rather than in the parent so that typing in one row
+ * does not re-render the whole list, and so there is no "which row am I
+ * editing" state to keep in sync with the data.
+ */
+function CategoryRow({
+  category,
+  busy,
+  onRename,
+}: {
+  category: Category;
+  busy: boolean;
+  onRename: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState(category.name);
+
+  // Commit on blur and on Enter, which is what an in-place edit is expected to
+  // do. Guarded so that tabbing through the list without changing anything
+  // does not fire a PATCH per row.
+  function commit() {
+    const trimmed = draft.trim();
+    if (!trimmed) {
+      setDraft(category.name);
+      return;
+    }
+    if (trimmed !== category.name) onRename(trimmed);
+  }
+
+  return (
+    <li className="flex items-center gap-3 px-3 py-2">
+      <input
+        value={draft}
+        disabled={busy}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") setDraft(category.name);
+        }}
+        aria-label={`Rename ${category.name}`}
+        className="flex-1 rounded-md border border-transparent px-2 py-1 text-sm hover:border-zinc-200 focus:border-zinc-300 focus:bg-white"
+      />
+      {!category.is_active && (
+        <span className="text-xs text-zinc-500">Inactive</span>
+      )}
+    </li>
   );
 }

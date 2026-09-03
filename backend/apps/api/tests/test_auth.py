@@ -23,14 +23,12 @@ def test_anonymous_gets_401_not_302(client):
     assert response.status_code == 401
 
 
-# def test_healthz_is_public(client):
-#     assert client.get("/healthz/").status_code == 200
-    
 def test_healthz_is_public(client, db):
     """Needs the db fixture: healthz deliberately touches the database, since
     a process that is up but cannot reach Postgres is not healthy in any
     useful sense."""
     assert client.get("/healthz/").status_code == 200
+
 
 def test_healthz_reports_unhealthy_when_database_is_unreachable(client, monkeypatch):
     """No db fixture, so database access is blocked. The check should report
@@ -38,6 +36,7 @@ def test_healthz_reports_unhealthy_when_database_is_unreachable(client, monkeypa
     response = client.get("/healthz/")
     assert response.status_code == 503
     assert response.json()["status"] == "error"
+
 
 # --- login ---------------------------------------------------------------
 

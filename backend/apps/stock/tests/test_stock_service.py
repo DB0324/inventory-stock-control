@@ -98,6 +98,25 @@ def test_issue_beyond_balance_refused(manager, item, warehouse):
     assert ss.on_hand(item, warehouse) == 10
 
 
+def test_issue_refused_where_the_stock_is_somewhere_else(
+    manager, item, warehouse, shop
+):
+    """Availability is per location, not global.
+
+    The item genuinely has 10 units -- they are just at the warehouse. Issuing
+    from the shop has to fail anyway, or the shop's balance goes negative and
+    the two locations stop adding up to the total. This is the edge the
+    global-balance version of the check would wave through.
+    """
+    ss.record_receipt(actor=manager, item=item, location=warehouse, quantity=10)
+
+    with pytest.raises(InsufficientStock):
+        ss.record_issue(actor=manager, item=item, location=shop, quantity=1)
+
+    assert ss.on_hand(item, shop) == 0
+    assert ss.on_hand(item) == 10
+
+
 def test_negative_adjustment_below_zero_refused(manager, item, warehouse):
     ss.record_receipt(actor=manager, item=item, location=warehouse, quantity=5)
     with pytest.raises(InsufficientStock):

@@ -46,6 +46,28 @@ class CategorySerializer(serializers.ModelSerializer):
         model = Category
         fields = ["id", "name", "is_active"]
 
+    def validate_name(self, value):
+        """The model's uniqueness is a functional index on Lower(name), and
+        DRF cannot infer a validator from one -- it only reads unique=True on
+        the field. Without this the database raises IntegrityError and the
+        manager gets a 500 for the most ordinary mistake there is: adding a
+        category that already exists in different capitalisation.
+        """
+        name = value.strip()
+        if not name:
+            raise serializers.ValidationError("A category needs a name.")
+
+        clash = Category.objects.filter(name__iexact=name)
+        if self.instance:
+            # A rename that only changes capitalisation must still be allowed,
+            # so the row being edited cannot clash with itself.
+            clash = clash.exclude(pk=self.instance.pk)
+        if clash.exists():
+            raise serializers.ValidationError(
+                f"A category called {clash.first().name!r} already exists."
+            )
+        return name
+
 
 class LocationSerializer(serializers.ModelSerializer):
     class Meta:

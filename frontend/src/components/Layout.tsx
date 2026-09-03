@@ -46,7 +46,13 @@ export default function Layout() {
 
   return (
     <div className="min-h-screen bg-zinc-50">
-      <header className="border-b border-zinc-200 bg-white">
+      {/* Sticky rather than fixed: sticky keeps the header in normal flow, so
+          the main content below still starts underneath it. A fixed header
+          would be lifted out of flow and the first rows of every page would
+          slide up behind it, needing a matching top padding to compensate.
+          bg-white has to stay opaque for the same reason -- content scrolls
+          under this, not past it. */}
+      <header className="sticky top-0 z-20 border-b border-zinc-200 bg-white">
         <div className="mx-auto flex max-w-6xl items-center gap-6 px-6 py-3">
           <span className="font-semibold">Inventory</span>
           <nav className="flex gap-4 text-sm">
