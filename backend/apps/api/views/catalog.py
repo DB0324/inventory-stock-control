@@ -4,13 +4,12 @@ Writes are manager-only (goal 1). Reads are open to any authenticated user,
 because staff need the item list to record movements against.
 """
 
-from django.db.models import Sum
-from django.db.models.functions import Coalesce
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.api.filters import apply_filters
 from apps.api.permissions import IsManager
 from apps.api.serializers import (
     CategorySerializer, ItemSerializer, MovementSerializer,
@@ -49,18 +48,14 @@ class ItemViewSet(ManagerWritesMixin, viewsets.ModelViewSet):
     serializer_class = ItemSerializer
 
     def get_queryset(self):
-        # on_hand is annotated in SQL, never summed in Python. Coalesce is
-        # load-bearing: without it a LEFT JOIN + SUM drops every item that has
-        # never moved, and they vanish from the list entirely.
-        # order_by is explicit because annotate() discards Meta.ordering, and
-        # Postgres gives no ordering guarantee without it -- page 2 could
-        # repeat rows from page 1. The id tiebreaker handles duplicate names.
-
-        return (
-            Item.objects.select_related("category")
-            .annotate(on_hand=Coalesce(Sum("ledger_entries__delta"), 0))
-            .order_by("name", "id")
-        )
+        # on_hand is annotated in SQL, never summed in Python -- the moment
+        # one screen adds up a movement list, two screens disagree.
+        base = Item.objects.select_related("category")
+        if self.action == "list":
+            return apply_filters(base, self.request.query_params)
+        # Detail routes still need on_hand, but none of the filtering: a
+        # search term must not be able to make a valid item 404.
+        return base.with_on_hand().order_by("name", "id")
 
     def perform_create(self, serializer):
         item = serializer.save()

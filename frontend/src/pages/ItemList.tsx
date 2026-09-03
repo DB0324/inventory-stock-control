@@ -3,22 +3,38 @@ import { Link, useSearchParams } from "react-router-dom";
 
 import { ApiError } from "../api/client";
 import { inventory } from "../api/inventory";
+import ItemFilters from "../components/ItemFilters";
 
 export default function ItemList() {
   // Search state lives in the URL, not in useState. That makes a filtered
   // list linkable and survivable across a refresh, and it means the query key
   // below changes automatically when the filter does.
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["items", params.toString()],
     queryFn: () => inventory.items(params),
   });
 
+  const page = Number(params.get("page") ?? 1);
+  const hasFilters = [...params.keys()].some((k) => k !== "page");
+
+  function goToPage(next: number) {
+    const params2 = new URLSearchParams(params);
+    if (next <= 1) params2.delete("page");
+    else params2.set("page", String(next));
+    setParams(params2);
+  }
+
+  // A 404 from the list endpoint means "page past the end", not "broken".
+  // A bookmarked or shared URL can point at page 4 of a result set that has
+  // since shrunk, and an error page would be a lie about what went wrong.
+  const pastEnd = error instanceof ApiError && error.status === 404;
+
   if (isLoading) {
     return <div className="text-sm text-zinc-500">Loading items…</div>;
   }
-  if (error) {
+  if (error && !pastEnd) {
     // Say what actually went wrong. "Could not load items" is true of a 401,
     // a 500 and a dead network alike, and the three need different responses
     // from whoever is reading the screen.
@@ -40,14 +56,31 @@ export default function ItemList() {
     <div className="space-y-4">
       <div className="flex items-baseline justify-between">
         <h1 className="text-xl font-semibold">Items</h1>
-        <span className="text-sm text-zinc-500">
-          {data?.count ?? 0} {data?.count === 1 ? "item" : "items"}
-        </span>
+        {!pastEnd && (
+          <span className="text-sm text-zinc-500">
+            {data?.count ?? 0} {data?.count === 1 ? "item" : "items"}
+          </span>
+        )}
       </div>
 
-      {items.length === 0 ? (
+      <ItemFilters />
+
+      {pastEnd ? (
         <div className="rounded-md border border-zinc-200 bg-white p-8 text-center text-sm text-zinc-500">
-          No items yet.
+          <div>There are no results on page {page}.</div>
+          <button
+            type="button"
+            onClick={() => goToPage(1)}
+            className="mt-2 text-accent-700 underline hover:text-accent-600"
+          >
+            Back to the first page
+          </button>
+        </div>
+      ) : items.length === 0 ? (
+        <div className="rounded-md border border-zinc-200 bg-white p-8 text-center text-sm text-zinc-500">
+          {/* Two very different situations, and telling someone "no items
+              yet" when they have simply mistyped a search is unhelpful. */}
+          {hasFilters ? "No items match these filters." : "No items yet."}
         </div>
       ) : (
         <div className="overflow-hidden rounded-md border border-zinc-200 bg-white">
@@ -116,6 +149,31 @@ export default function ItemList() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Prev/next rather than numbered pages: DRF gives us the two link
+          fields directly, so this needs no arithmetic about how many pages
+          exist and cannot drift out of step with the server's page size. */}
+      {!pastEnd && (data?.next || data?.previous) && (
+        <div className="flex items-center justify-between text-sm">
+          <button
+            type="button"
+            onClick={() => goToPage(page - 1)}
+            disabled={!data?.previous}
+            className="rounded-md border border-zinc-300 px-3 py-1.5 hover:bg-white disabled:opacity-40"
+          >
+            ← Previous
+          </button>
+          <span className="text-zinc-500">Page {page}</span>
+          <button
+            type="button"
+            onClick={() => goToPage(page + 1)}
+            disabled={!data?.next}
+            className="rounded-md border border-zinc-300 px-3 py-1.5 hover:bg-white disabled:opacity-40"
+          >
+            Next →
+          </button>
         </div>
       )}
     </div>

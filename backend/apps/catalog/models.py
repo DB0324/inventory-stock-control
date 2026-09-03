@@ -5,7 +5,7 @@ note on Item below, that omission is the whole point.
 """
 
 from django.db import models
-from django.db.models.functions import Upper
+from django.db.models.functions import Coalesce, Upper
 from django.conf import settings
 from apps.stock.models import ImmutableModel
 
@@ -27,6 +27,51 @@ class Category(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class ItemQuerySet(models.QuerySet):
+    """Every filter here runs in SQL. Goal 6 is explicit that the browser must
+    not receive the full list and filter locally -- that stops being viable
+    the moment the catalogue outgrows one page, and it leaks every archived
+    item to anyone who opens devtools."""
+
+    def with_on_hand(self, location=None):
+        """Annotate the derived quantity.
+
+        Coalesce is load-bearing. Without it a LEFT JOIN + SUM returns NULL
+        for items that have never moved, and they silently vanish from any
+        list that filters or sorts on the result.
+
+        With a location, this is that shelf's balance rather than the global
+        total. The brief is ambiguous here and this is the more useful
+        reading: filtering to a location and then showing a global number
+        would be actively misleading.
+        """
+        entries = models.Q(ledger_entries__isnull=False)
+        if location is not None:
+            entries &= models.Q(ledger_entries__location=location)
+        return self.annotate(
+            on_hand=Coalesce(
+                models.Sum("ledger_entries__delta", filter=entries),
+                models.Value(0),
+                output_field=models.IntegerField(),
+            )
+        )
+
+    def search(self, term):
+        """Substring match on name and SKU, served by the pg_trgm GIN indexes
+        from catalog.0002. Without those, a leading-wildcard ILIKE is a
+        sequential scan over the whole table."""
+        if not term:
+            return self
+        return self.filter(
+            models.Q(name__icontains=term) | models.Q(sku__icontains=term)
+        )
+
+    def at_or_below_reorder(self):
+        """Must be applied after with_on_hand(), since it references that
+        annotation. "At or below" is the brief's wording, so lte, not lt."""
+        return self.filter(on_hand__lte=models.F("reorder_level"))
 
 
 class Item(models.Model):
@@ -58,6 +103,8 @@ class Item(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    objects = ItemQuerySet.as_manager()
 
     class Meta:
         db_table = "catalog_item"
