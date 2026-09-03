@@ -61,10 +61,16 @@ if _host not in _LOCAL_HOSTS and not env.bool("ALLOW_REMOTE_TEST_DB", default=Fa
         f"throwaway host, set ALLOW_REMOTE_TEST_DB=1 to override."
     )
 
-# WhiteNoise warns about a missing staticfiles/ on every request. The
-# directory is created by collectstatic at deploy time and tests never serve
-# static files, so use Django's plain storage here instead.
+# WhiteNoise warns "No directory at: .../staticfiles/" on every single
+# request under test, which buries anything real in the output. The directory
+# is created by collectstatic at deploy time and tests never serve a static
+# file, so drop the middleware entirely rather than only swapping the storage
+# backend -- the warning comes from the middleware, and changing STORAGES
+# alone does not silence it.
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
 }
+
+MIDDLEWARE = [m for m in MIDDLEWARE  # noqa: F405
+              if m != "whitenoise.middleware.WhiteNoiseMiddleware"]
