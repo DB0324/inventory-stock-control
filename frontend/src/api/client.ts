@@ -52,12 +52,40 @@ function readCookie(name: string): string {
   return match ? decodeURIComponent(match[2]) : "";
 }
 
+/** The CSRF token, held in memory.
+ *
+ * In production the API lives on a different domain than the SPA, so the
+ * csrftoken cookie belongs to the API's origin and document.cookie here
+ * cannot see it -- the browser sends it with every request, but JavaScript on
+ * this page has no access. So the token arrives in the body of
+ * /api/auth/csrf/ instead and is remembered here.
+ *
+ * The cookie is still the fallback, which is what makes same-origin
+ * deployments and local development work unchanged.
+ */
+let csrfToken = "";
+
+export function rememberCsrfToken(token: string) {
+  csrfToken = token;
+}
+
+/** Fetch a fresh token and remember it.
+ *
+ * Called on mount and again after login: Django rotates the CSRF secret when
+ * a session starts, which silently invalidates whatever token we were holding
+ * from before signing in.
+ */
+export async function primeCsrfToken(): Promise<void> {
+  const { csrftoken } = await api.get<{ csrftoken: string }>("/api/auth/csrf/");
+  rememberCsrfToken(csrftoken);
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const method = (options.method ?? "GET").toUpperCase();
   const headers = new Headers(options.headers);
 
   if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
-    headers.set("X-CSRFToken", readCookie("csrftoken"));
+    headers.set("X-CSRFToken", csrfToken || readCookie("csrftoken"));
   }
   // FormData sets its own multipart boundary; overriding Content-Type here
   // would corrupt the body. Only JSON gets the header.

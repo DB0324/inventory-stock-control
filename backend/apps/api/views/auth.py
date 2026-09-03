@@ -11,14 +11,21 @@ from apps.api.serializers import LoginSerializer, MeSerializer
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def csrf(request):
-    """Hands the client a CSRF cookie before it posts anything.
+    """Hands the client a CSRF token before it posts anything.
 
-    The client cannot read an HttpOnly cookie, so CSRF_COOKIE_HTTPONLY is
-    False -- it has to read the token and echo it in a header. That is safe:
-    the token is not a credential, and the session cookie stays HttpOnly.
+    The token is returned in the *body*, not only as a cookie, and that is
+    the load-bearing part in production. The SPA is served from a different
+    domain than this API, so document.cookie on the frontend origin cannot
+    see a cookie set for the API's domain -- the browser sends it, but
+    JavaScript there cannot read it. Reading the cookie works only in
+    development, where both sides are localhost.
+
+    Returning it in the body is safe. A CSRF token is not a credential: it
+    proves the request came from a page that could read this response, which
+    is exactly what we want to establish. The session cookie stays HttpOnly
+    and is never exposed here.
     """
-    get_token(request)
-    return Response({"detail": "ok"})
+    return Response({"csrftoken": get_token(request)})
 
 
 @api_view(["POST"])

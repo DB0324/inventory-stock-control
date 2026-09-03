@@ -130,3 +130,35 @@ def test_staff_sees_only_assigned_locations(client, staff_wh, warehouse, shop):
     client.force_authenticate(staff_wh)
     codes = {loc["code"] for loc in client.get("/api/auth/me/").data["locations"]}
     assert codes == {"WH"}
+
+def test_csrf_endpoint_returns_the_token_in_the_body(client):
+    """Not only as a cookie.
+
+    In production the SPA is served from a different domain than this API, so
+    document.cookie on the frontend origin cannot read a cookie set for the
+    API's domain. The browser still sends it, but the client has no way to
+    echo it in the X-CSRFToken header unless we hand it over in the body.
+    Reading it from the cookie works only when both sides share a hostname,
+    which is true in development and false in production.
+    """
+    response = client.get("/api/auth/csrf/")
+    assert response.status_code == 200
+
+    token = response.json()["csrftoken"]
+    # Django rejects a token that is neither a 32-char secret nor a 64-char
+    # masked token with "has incorrect length" -- which is exactly the error
+    # an empty header produced before this endpoint returned anything.
+    assert len(token) in (32, 64)
+
+
+def test_login_succeeds_using_only_the_token_from_the_body(client, manager):
+    """The end-to-end version of the above: sign in without ever reading
+    document.cookie, the way the deployed frontend has to."""
+    token = client.get("/api/auth/csrf/").json()["csrftoken"]
+    response = client.post(
+        "/api/auth/login/",
+        data={"email": "manager@test.local", "password": "x"},
+        content_type="application/json",
+        headers={"x-csrftoken": token},
+    )
+    assert response.status_code == 200, response.content

@@ -1,10 +1,20 @@
-import { Link, Outlet, useLocation } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../auth/useAuth";
 
 export default function Layout() {
   const { user, logout, loggingOut } = useAuth();
   const { pathname } = useLocation();
+  const navigate = useNavigate();
+
+  // Navigate explicitly rather than trusting RequireAuth to notice that the
+  // user went null. It should -- it is a context consumer and re-renders --
+  // but stranding someone on a page whose every request 401s is bad enough
+  // that this path is worth making unconditional.
+  async function handleSignOut() {
+    await logout();
+    navigate("/login", { replace: true });
+  }
 
   // Only Items for now. The Locations link comes back with goal 5, when
   // there's a page behind it -- a dead link visible only to managers is
@@ -41,7 +51,7 @@ export default function Layout() {
                 "working" rather than "broken". */}
             <button
               type="button"
-              onClick={logout}
+              onClick={handleSignOut}
               disabled={loggingOut}
               className="hover:text-zinc-900 disabled:text-zinc-400"
             >

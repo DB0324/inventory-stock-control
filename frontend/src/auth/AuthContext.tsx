@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { ApiError, api } from "../api/client";
+import { ApiError, api, primeCsrfToken } from "../api/client";
 import { AuthContext } from "./context";
 import type { Me } from "../types/api";
 
@@ -19,7 +19,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // expected answer for a fresh visitor, not an error worth logging.
     (async () => {
       try {
-        await api.get("/api/auth/csrf/");
+        await primeCsrfToken();
         setUser(await api.get<Me>("/api/auth/me/"));
       } catch (error) {
         if (!(error instanceof ApiError && error.isUnauthenticated)) {
@@ -34,7 +34,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function login(email: string, password: string) {
     // The login response is the same shape as /me/, so there is no need for
     // a follow-up request to learn the user's role and locations.
-    setUser(await api.post<Me>("/api/auth/login/", { email, password }));
+    const me = await api.post<Me>("/api/auth/login/", { email, password });
+    // Django rotates the CSRF secret when a session begins, which invalidates
+    // the token we signed in with. Without re-priming, the very next write --
+    // signing out, recording a movement -- fails CSRF for no visible reason.
+    await primeCsrfToken();
+    setUser(me);
   }
 
   async function logout() {
