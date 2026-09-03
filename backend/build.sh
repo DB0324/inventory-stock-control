@@ -12,4 +12,4 @@ python manage.py create_demo_users
 # TEMPORARY: the first seed ran before the date-ordering fix, so production
 # holds a history where openings are dated last and one shelf goes negative.
 # Reverted to plain seed_demo_data immediately after this deploy.
-python manage.py seed_demo_data --reset --i-know-this-is-production
+python manage.py seed_demo_data
