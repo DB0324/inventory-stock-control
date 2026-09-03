@@ -162,6 +162,8 @@ class Command(BaseCommand):
         transfers spread across the period."""
         now = timezone.now()
         warehouse = locations[0]
+        schedule = []  # (movement_id, timestamp) pairs, filled as we go
+        recorded = []  # ids of the post-opening movements, in recording order
 
         # Opening stock, deliberately uneven so that some items finish below
         # their reorder level and the low-stock filter has something to find.
@@ -172,15 +174,29 @@ class Command(BaseCommand):
                 opening = item.reorder_level  # exactly at the level: lte, not lt
             else:
                 opening = item.reorder_level * random.randint(3, 6)
-            ss.record_receipt(
+            movement = ss.record_receipt(
                 actor=manager,
                 item=item,
                 location=warehouse,
                 quantity=opening,
                 note="Opening stock",
             )
+            # Dated *before* the activity window. Without this the opening
+            # receipt keeps its auto_now_add value of "now" and every item
+            # reads as having been issued weeks before the stock arrived --
+            # a history the application itself could never have produced,
+            # which is exactly what this command promises not to build.
+            schedule.append(
+                (
+                    movement.id,
+                    now
+                    - timedelta(
+                        days=WEEKS_OF_HISTORY * 7 + random.randint(1, 7),
+                        hours=random.randint(8, 17),
+                    ),
+                )
+            )
 
-        recent = []
         for _ in range(140):
             item = random.choice(items)
             kind = random.choices(
@@ -219,11 +235,36 @@ class Command(BaseCommand):
                 # bypassing the guard the whole design rests on, and the demo
                 # database would then contain a state the app cannot produce.
                 continue
-            recent.append(movement.id)
+            recorded.append(movement.id)
 
-        self._backdate(recent, now)
+        # Timestamps are assigned in *recording* order, not independently.
+        #
+        # The service validated each movement against the balance as it stood
+        # at the moment it was recorded, so that sequence is causally sound.
+        # Handing each movement an unrelated random date destroys that: a
+        # transfer that put stock on the shop floor can end up dated after the
+        # issue that removed it, and replaying the ledger chronologically then
+        # shows a negative balance. The totals still come out right, which is
+        # exactly why it is easy to miss -- but the history a reviewer reads
+        # is the chronological one.
+        #
+        # Sorting the dates and zipping them onto the movements in order keeps
+        # chronological order identical to recording order.
+        dates = sorted(
+            now
+            - timedelta(
+                days=random.randint(0, WEEKS_OF_HISTORY * 7 - 1),
+                # Business hours, so the timestamps read like a working day
+                # rather than a machine running at 3am.
+                hours=random.randint(8, 17),
+            )
+            for _ in recorded
+        )
+        schedule.extend(zip(recorded, dates))
 
-    def _backdate(self, movement_ids, now):
+        self._backdate(schedule)
+
+    def _backdate(self, schedule):
         """Spread timestamps across the history window.
 
         recorded_at is auto_now_add, so it cannot be set through the service.
@@ -237,7 +278,7 @@ class Command(BaseCommand):
         handle()'s atomic block means a crash would roll the ALTERs back
         anyway, but relying on that alone would make the safety implicit.
         """
-        if not movement_ids:
+        if not schedule:
             return
 
         with connection.cursor() as cur:
@@ -258,13 +299,7 @@ class Command(BaseCommand):
                 "stock_ledger_entry_immutable"
             )
             try:
-                for movement_id in movement_ids:
-                    when = now - timedelta(
-                        days=random.randint(0, WEEKS_OF_HISTORY * 7 - 1),
-                        # Business hours, so the timestamps read like a working
-                        # day rather than a machine running at 3am.
-                        hours=random.randint(8, 17),
-                    )
+                for movement_id, when in schedule:
                     cur.execute(
                         "UPDATE stock_movement SET recorded_at = %s WHERE id = %s",
                         [when, movement_id],

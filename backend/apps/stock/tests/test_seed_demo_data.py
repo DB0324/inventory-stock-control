@@ -78,3 +78,41 @@ def test_is_idempotent(seeded):
     call_command("seed_demo_data", verbosity=0)
     assert StockMovement.objects.count() == before
     assert Item.objects.count() == 25
+
+
+def test_opening_stock_predates_everything_it_supplies(seeded):
+    """Stock cannot be issued before it arrives.
+
+    The opening receipts are written first but carry auto_now_add timestamps,
+    so unless they are explicitly backdated they land at "now" -- after every
+    movement that consumed them. The balances still add up, but the history
+    reads as impossible, which defeats the point of routing the seed through
+    the service layer at all.
+    """
+    for item in Item.objects.all():
+        movements = list(
+            StockMovement.objects.filter(item=item).order_by("recorded_at", "id")
+        )
+        if len(movements) < 2:
+            continue
+        first = movements[0]
+        assert first.note == "Opening stock", (
+            f"{item.sku}: earliest movement is a {first.kind} at "
+            f"{first.recorded_at}, not the opening receipt"
+        )
+
+
+def test_ledger_balance_never_goes_negative_in_time_order(seeded):
+    """Replaying the ledger chronologically must never dip below zero.
+
+    Stronger than summing the final balance: a history can finish positive
+    while having passed through an impossible negative along the way.
+    """
+    running: dict[tuple[int, int], int] = {}
+    for entry in LedgerEntry.objects.order_by("occurred_at", "id"):
+        key = (entry.item_id, entry.location_id)
+        running[key] = running.get(key, 0) + entry.delta
+        assert running[key] >= 0, (
+            f"item {entry.item_id} at location {entry.location_id} "
+            f"hit {running[key]} on {entry.occurred_at}"
+        )
