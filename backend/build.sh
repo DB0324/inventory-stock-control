@@ -9,4 +9,7 @@ python manage.py migrate
 python manage.py create_demo_users
 # Idempotent: does nothing once items exist, so a redeploy will not
 # double every quantity.
-python manage.py seed_demo_data
+# TEMPORARY: the first seed ran before the date-ordering fix, so production
+# holds a history where openings are dated last and one shelf goes negative.
+# Reverted to plain seed_demo_data immediately after this deploy.
+python manage.py seed_demo_data --reset --i-know-this-is-production
