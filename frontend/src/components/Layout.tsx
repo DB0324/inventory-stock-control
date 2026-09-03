@@ -3,7 +3,7 @@ import { Link, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../auth/useAuth";
 
 export default function Layout() {
-  const { user, logout } = useAuth();
+  const { user, logout, loggingOut } = useAuth();
   const { pathname } = useLocation();
 
   // Only Items for now. The Locations link comes back with goal 5, when
@@ -36,8 +36,16 @@ export default function Layout() {
             <span className="rounded-sm bg-zinc-100 px-2 py-0.5 text-xs">
               {user?.role}
             </span>
-            <button onClick={logout} className="hover:text-zinc-900">
-              Sign out
+            {/* Disabled while in flight so a second click cannot fire a
+                second request, and labelled so a slow cold start reads as
+                "working" rather than "broken". */}
+            <button
+              type="button"
+              onClick={logout}
+              disabled={loggingOut}
+              className="hover:text-zinc-900 disabled:text-zinc-400"
+            >
+              {loggingOut ? "Signing out…" : "Sign out"}
             </button>
           </div>
         </div>

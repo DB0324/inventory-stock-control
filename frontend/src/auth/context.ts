@@ -5,6 +5,8 @@ import type { Me } from "../types/api";
 export interface AuthState {
   user: Me | null;
   loading: boolean;
+  /** True while the sign-out request is in flight. */
+  loggingOut: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
 }
