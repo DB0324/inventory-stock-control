@@ -64,6 +64,10 @@ export default function MovementForm({ item }: { item: Item }) {
       queryClient.invalidateQueries({ queryKey: ["item", item.id] });
       queryClient.invalidateQueries({ queryKey: ["movements", item.id] });
       queryClient.invalidateQueries({ queryKey: ["items"] });
+      // A movement can push an item under its reorder level or lift it back
+      // over, so the alerts list and the navigation badge are both stale now.
+      queryClient.invalidateQueries({ queryKey: ["alerts"] });
+      queryClient.invalidateQueries({ queryKey: ["alert-count"] });
     },
     onError: (err) => {
       setSuccess("");

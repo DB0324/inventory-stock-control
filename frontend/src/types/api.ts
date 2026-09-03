@@ -6,6 +6,13 @@ export interface LocationBrief {
   name: string;
 }
 
+/** The full row from /api/locations/. LocationBrief is the trimmed version
+ *  embedded in /me/, which deliberately omits is_active -- a user is only
+ *  ever given active locations. */
+export interface Location extends LocationBrief {
+  is_active: boolean;
+}
+
 export interface Me {
   id: number;
   email: string;
@@ -81,4 +88,65 @@ export interface MovementResult {
   movement: Movement;
   on_hand: Record<string, number>;
   on_hand_total: number;
+}
+
+export interface Assignment {
+  id: number;
+  user: number;
+  location: number;
+  location_code: string;
+  assigned_by_name: string;
+  assigned_at: string;
+}
+
+export interface Staff {
+  id: number;
+  email: string;
+  full_name: string;
+  role: Role;
+  is_active: boolean;
+  assignments: Assignment[];
+}
+
+export interface WeeklyVolume {
+  week: string;
+  receipts: number;
+  issues: number;
+  movements: number;
+}
+
+export interface Breakdown {
+  label: string;
+  /** Only present on the location breakdown, where the label is a code. */
+  name?: string;
+  on_hand: number;
+}
+
+export interface DashboardData {
+  active_items: number;
+  low_stock_items: number;
+  movements_today: number;
+  items_moved_this_week: number;
+  week_starts: string;
+  total_on_hand: number;
+  by_category: Breakdown[];
+  by_location: Breakdown[];
+  weekly: WeeklyVolume[];
+  recent: Movement[];
+}
+
+export interface ImportRowError {
+  row: number;
+  sku: string;
+  error: string;
+}
+
+/** Both imports report the same shape apart from their headline counters, so
+ *  the optional fields distinguish them rather than two near-identical types. */
+export interface ImportReport {
+  created?: number;
+  updated?: number;
+  recorded?: number;
+  failed: number;
+  errors: ImportRowError[];
 }

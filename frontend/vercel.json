@@ -1,4 +1,15 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+  "rewrites": [
+    {
+      "//": "API first, or the SPA catch-all below would swallow it. Proxying the API through this origin is what makes the session cookie FIRST-party: Django sets it with no Domain attribute, so the browser scopes it to whatever host it asked, which through this rewrite is the Vercel domain. Served straight from onrender.com it is a third-party cookie, and Chrome blocks those in incognito by default - login succeeds, the cookie is dropped, and the next request arrives anonymous.",
+      "source": "/api/(.*)",
+      "destination": "https://inventory-stock-control-ml03.onrender.com/api/$1"
+    },
+    {
+      "//": "Everything else is the SPA. React Router owns the path, so an unknown URL must still serve index.html rather than 404.",
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
 }

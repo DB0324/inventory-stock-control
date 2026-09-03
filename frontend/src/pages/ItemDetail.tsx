@@ -1,8 +1,9 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { inventory } from "../api/inventory";
+import { useAuth } from "../auth/useAuth";
 import MovementBadge from "../components/MovementBadge";
 import MovementForm from "../components/MovementForm";
 import Timeline from "../components/Timeline";
@@ -11,6 +12,24 @@ export default function ItemDetail() {
   const { id } = useParams();
   const itemId = Number(id);
   const [tab, setTab] = useState<"movements" | "history">("movements");
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  // Archive and restore are the same button with the label swapped -- they
+  // are one toggle to the person using it, and pretending otherwise would
+  // mean two mutations that can never both apply.
+  const toggleArchive = useMutation({
+    mutationFn: (archived: boolean) =>
+      archived ? inventory.restore(itemId) : inventory.archive(itemId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["item", itemId] });
+      queryClient.invalidateQueries({ queryKey: ["timeline", itemId] });
+      queryClient.invalidateQueries({ queryKey: ["items"] });
+      // Archived items drop out of the alerts list, so the badge moves too.
+      queryClient.invalidateQueries({ queryKey: ["alert-count"] });
+      queryClient.invalidateQueries({ queryKey: ["alerts"] });
+    },
+  });
 
   const item = useQuery({
     queryKey: ["item", itemId],
@@ -41,7 +60,7 @@ export default function ItemDetail() {
 
   return (
     <div className="space-y-6">
-      <Link to="/" className="text-sm text-zinc-500 hover:text-zinc-900">
+      <Link to="/items" className="text-sm text-zinc-500 hover:text-zinc-900">
         ← Items
       </Link>
 
@@ -58,6 +77,25 @@ export default function ItemDetail() {
             )}
           </div>
         </div>
+        <div className="flex items-start gap-6">
+        {user?.is_manager && (
+          <div className="flex gap-2">
+            <Link
+              to={`/items/${itemId}/edit`}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-50"
+            >
+              Edit
+            </Link>
+            <button
+              type="button"
+              onClick={() => toggleArchive.mutate(data.is_archived)}
+              disabled={toggleArchive.isPending}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-50 disabled:opacity-40"
+            >
+              {data.is_archived ? "Restore" : "Archive"}
+            </button>
+          </div>
+        )}
         <div className="text-right">
           <div className="text-xs uppercase tracking-wide text-zinc-500">
             On hand
@@ -68,6 +106,7 @@ export default function ItemDetail() {
             {data.on_hand}
           </div>
           <div className="text-xs text-zinc-400">{data.unit_of_measure}</div>
+        </div>
         </div>
       </div>
 

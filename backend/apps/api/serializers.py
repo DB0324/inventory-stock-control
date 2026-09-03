@@ -1,6 +1,7 @@
+from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from apps.catalog.models import Category, Item, ItemTimelineEvent
-from apps.stock.models import Location, StockMovement
+from apps.stock.models import Location, LocationAssignment, StockMovement
 
 
 class LocationBriefSerializer(serializers.ModelSerializer):
@@ -140,3 +141,40 @@ class TransferInputSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"destination": "Source and destination must differ."})
         return attrs
+
+class AssignmentSerializer(serializers.ModelSerializer):
+    """One staff-to-location grant.
+
+    assigned_by is read-only and taken from the request. Letting a client name
+    the grantor would make the audit trail forgeable, which is the one thing
+    this table exists to prevent.
+    """
+
+    location_code = serializers.CharField(source="location.code", read_only=True)
+    assigned_by_name = serializers.CharField(
+        source="assigned_by.full_name", read_only=True
+    )
+
+    class Meta:
+        model = LocationAssignment
+        fields = [
+            "id", "user", "location", "location_code",
+            "assigned_by_name", "assigned_at",
+        ]
+        read_only_fields = ["assigned_at"]
+
+
+class StaffSerializer(serializers.ModelSerializer):
+    """A staff member and the locations they may record movements at.
+
+    Managers are excluded from the list this feeds. They hold no assignment
+    rows at all -- their reach is universal by role, so showing checkboxes for
+    them would imply an access model that does not exist.
+    """
+
+    assignments = AssignmentSerializer(source="location_assignments", many=True,
+                                       read_only=True)
+
+    class Meta:
+        model = get_user_model()
+        fields = ["id", "email", "full_name", "role", "is_active", "assignments"]

@@ -4,12 +4,14 @@ import { Link, useSearchParams } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { inventory } from "../api/inventory";
 import ItemFilters from "../components/ItemFilters";
+import { useAuth } from "../auth/useAuth";
 
 export default function ItemList() {
   // Search state lives in the URL, not in useState. That makes a filtered
   // list linkable and survivable across a refresh, and it means the query key
   // below changes automatically when the filter does.
   const [params, setParams] = useSearchParams();
+  const { user } = useAuth();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["items", params.toString()],
@@ -56,11 +58,23 @@ export default function ItemList() {
     <div className="space-y-4">
       <div className="flex items-baseline justify-between">
         <h1 className="text-xl font-semibold">Items</h1>
+        <div className="flex items-baseline gap-4">
         {!pastEnd && (
           <span className="text-sm text-zinc-500">
             {data?.count ?? 0} {data?.count === 1 ? "item" : "items"}
           </span>
         )}
+        {/* Managers only -- goal 2 says they create items. Staff record
+            movements against items that already exist. */}
+        {user?.is_manager && (
+          <Link
+            to="/items/new"
+            className="rounded-md bg-accent-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-700"
+          >
+            New item
+          </Link>
+        )}
+        </div>
       </div>
 
       <ItemFilters />

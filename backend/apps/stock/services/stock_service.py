@@ -104,6 +104,17 @@ def _write(*, item, kind, quantity, actor, entries, location=None,
         )
         for loc, delta in entries
     ])
+
+    # Every movement funnels through here, which makes this the one place a
+    # recovery can be noticed. If the item has climbed back above its reorder
+    # level, any dismissal of its low-stock alert lapses -- so the alert
+    # returns on its own the next time stock falls (goal 10).
+    #
+    # Local import: alert_service imports this module for on_hand(), so a
+    # top-level import in either direction closes a cycle.
+    from apps.stock.services import alert_service
+
+    alert_service.clear_if_recovered(item)
     return movement
 
 

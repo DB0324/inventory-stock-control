@@ -14,13 +14,12 @@ reviewer actually reads. See the long note in _record_movements.
 """
 
 import random
-from contextlib import contextmanager
 from datetime import timedelta
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
-from django.db import connection, transaction
+from django.db import transaction
 from django.utils import timezone
 
 from apps.catalog.models import Category, Item, ItemTimelineEvent
@@ -32,6 +31,7 @@ from apps.stock.models import (
     StockMovement,
 )
 from apps.stock.services import stock_service as ss
+from apps.stock.services.immutability import immutability_disabled
 from apps.stock.services.exceptions import InsufficientStock
 
 CATEGORIES = ["Fasteners", "Electrical", "Plumbing", "Safety gear"]
@@ -82,46 +82,6 @@ RANDOM_SEED = 20260903
 
 WEEKS_OF_HISTORY = 8
 HISTORY_DAYS = WEEKS_OF_HISTORY * 7
-
-# Every append-only table and the trigger guarding it, in one place -- so that
-# adding a fourth means editing one list, and so nothing can be disabled
-# without also being re-enabled.
-IMMUTABLE_TRIGGERS = [
-    ("stock_movement", "stock_movement_immutable"),
-    ("stock_ledger_entry", "stock_ledger_entry_immutable"),
-    ("catalog_item_timeline_event", "catalog_item_timeline_event_immutable"),
-]
-
-
-@contextmanager
-def immutability_disabled():
-    """Turn the append-only triggers off for the duration of the block.
-
-    This is the most dangerous code in the project, so it is written once and
-    reused rather than repeated at each call site.
-
-    The finally is not defensive habit. A disabled immutability trigger is the
-    worst state to leave a database in, because everything looks healthy and
-    nothing is actually protected -- the guarantee is gone and nothing says so.
-    Callers run inside an atomic block, so a crash would roll the ALTERs back
-    anyway, but relying on that alone would make the safety implicit.
-    """
-    with connection.cursor() as cur:
-        # Postgres refuses ALTER TABLE on a table with pending trigger events,
-        # and Django creates foreign keys as DEFERRABLE INITIALLY DEFERRED, so
-        # every insert so far in this transaction has left a check sitting in
-        # the queue. This forces them to run now and empties it. Without it the
-        # command dies with "cannot ALTER TABLE because it has pending trigger
-        # events" -- on every deploy, not only under test.
-        cur.execute("SET CONSTRAINTS ALL IMMEDIATE")
-        for table, trigger in IMMUTABLE_TRIGGERS:
-            cur.execute(f"ALTER TABLE {table} DISABLE TRIGGER {trigger}")
-        try:
-            yield cur
-        finally:
-            for table, trigger in IMMUTABLE_TRIGGERS:
-                cur.execute(f"ALTER TABLE {table} ENABLE TRIGGER {trigger}")
-
 
 class Command(BaseCommand):
     help = "Seed categories, locations, items and eight weeks of movements."

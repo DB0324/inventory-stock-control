@@ -285,3 +285,76 @@ class LedgerEntry(ImmutableModel):
 
     def __str__(self):
         return f"item {self.item_id} @ location {self.location_id}: {self.delta:+d}"
+
+
+class LowStockDismissal(models.Model):
+    """A manager saying "yes, I know" about one item's low-stock alert.
+
+    Deliberately NOT append-only, unlike everything else in this file. The
+    ledger is a record of what happened and must never change; this is
+    operational state about what someone wants to see on a screen. Making it
+    immutable would mean writing a second row to undo the first and then
+    reasoning about which one wins, which is more machinery than the problem
+    deserves.
+
+    The requirement is that a dismissed alert comes back if the item rises
+    above its reorder level and then falls to or below it again. Two fields
+    carry that:
+
+    * cleared_at -- set the moment a movement takes the item back above its
+      reorder level. stock_service calls into here on every write, so this
+      costs one comparison per movement rather than a replay of the ledger.
+      The alternative was deriving "did it ever recover?" by walking every
+      entry since the dismissal, which is correct but pays for history the
+      system already knows how to summarise.
+
+    * reorder_level -- the threshold as it stood when the alert was
+      dismissed. If a manager later raises the reorder level, the item is low
+      against a bar nobody has acknowledged, so the dismissal no longer
+      applies and the alert returns.
+    """
+
+    item = models.ForeignKey(
+        "catalog.Item",
+        on_delete=models.PROTECT,
+        related_name="low_stock_dismissals",
+    )
+    dismissed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="alerts_dismissed",
+    )
+    dismissed_at = models.DateTimeField(auto_now_add=True)
+    reorder_level = models.IntegerField(
+        help_text="The threshold at the time of dismissal, not the item's current one.",
+    )
+    cleared_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Set when stock recovered above the reorder level.",
+    )
+
+    class Meta:
+        db_table = "stock_low_stock_dismissal"
+        ordering = ["-dismissed_at"]
+        constraints = [
+            # At most one live dismissal per item, enforced by a partial
+            # index. Cleared rows stay for the audit trail, so a plain unique
+            # constraint would block the second dismissal after a recovery.
+            models.UniqueConstraint(
+                fields=["item"],
+                condition=models.Q(cleared_at__isnull=True),
+                name="one_active_dismissal_per_item",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["item"],
+                condition=models.Q(cleared_at__isnull=True),
+                name="active_dismissal_idx",
+            ),
+        ]
+
+    def __str__(self):
+        state = "cleared" if self.cleared_at else "active"
+        return f"dismissal for item {self.item_id} ({state})"

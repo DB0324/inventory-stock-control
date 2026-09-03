@@ -1,4 +1,7 @@
+import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
+
+import { inventory } from "../api/inventory";
 
 import { useAuth } from "../auth/useAuth";
 
@@ -16,10 +19,30 @@ export default function Layout() {
     navigate("/login", { replace: true });
   }
 
-  // Only Items for now. The Locations link comes back with goal 5, when
-  // there's a page behind it -- a dead link visible only to managers is
-  // worse than a missing one, since managers are who reviews this.
-  const links = [{ to: "/", label: "Items" }];
+  // The badge is on every screen, so it gets its own lightweight endpoint
+  // rather than counting a page of serialized items. Refetched on an interval
+  // because stock falls low because of what *other* people record, not
+  // because of anything this tab did.
+  const alertCount = useQuery({
+    queryKey: ["alert-count"],
+    queryFn: inventory.alertCount,
+    refetchInterval: 60_000,
+  });
+  const lowStock = alertCount.data?.count ?? 0;
+
+  const links = [
+    { to: "/", label: "Dashboard", badge: 0 },
+    { to: "/items", label: "Items", badge: 0 },
+    { to: "/alerts", label: "Low stock", badge: lowStock },
+    // Manager-only link for a manager-only page. Absent rather than disabled:
+    // staff have nothing to do there, and the server refuses either way.
+    ...(user?.is_manager
+      ? [
+          { to: "/locations", label: "Locations", badge: 0 },
+          { to: "/data", label: "Import / export", badge: 0 },
+        ]
+      : []),
+  ];
 
   return (
     <div className="min-h-screen bg-zinc-50">
@@ -31,13 +54,23 @@ export default function Layout() {
               <Link
                 key={link.to}
                 to={link.to}
-                className={
+                className={`flex items-center gap-1.5 ${
                   pathname === link.to
                     ? "font-medium text-accent-700"
                     : "text-zinc-600 hover:text-zinc-900"
-                }
+                }`}
               >
                 {link.label}
+                {link.badge > 0 && (
+                  // Amber, not red. These are things to order, not failures --
+                  // red is reserved for something having gone wrong.
+                  <span
+                    className="rounded-full bg-amber-100 px-1.5 py-0.5 text-xs font-medium tabular-nums text-amber-800"
+                    aria-label={`${link.badge} items low on stock`}
+                  >
+                    {link.badge}
+                  </span>
+                )}
               </Link>
             ))}
           </nav>

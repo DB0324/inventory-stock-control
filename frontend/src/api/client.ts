@@ -11,7 +11,12 @@
  * token is not a credential, and the session cookie stays HttpOnly.
  */
 
-const BASE = import.meta.env.VITE_API_URL as string;
+// Empty in production, where vercel.json proxies /api to the backend on this
+// same origin -- so requests go to /api/... and the session cookie is
+// first-party. In development it points at the Django dev server. Falling back
+// to "" rather than a hardcoded host means a missing value degrades to
+// same-origin, which is the safe direction.
+const BASE = import.meta.env.VITE_API_URL ?? "";
 
 export class ApiError extends Error {
   // Spelled out longhand rather than as constructor parameter properties.
@@ -130,4 +135,6 @@ export const api = {
     }),
   patch: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
+  // Returns 204 with no body, which request() already handles.
+  delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
 };

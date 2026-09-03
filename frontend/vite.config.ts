@@ -2,10 +2,14 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-// No server.proxy, deliberately. Proxying /api to Django would make dev
-// same-origin and hide every cookie and CSRF mistake until deploy day --
-// production is genuinely cross-origin, and dev.py is already configured for
-// that with CORS_ALLOW_CREDENTIALS and CSRF_TRUSTED_ORIGINS.
+// No server.proxy in dev, deliberately -- and note this now makes development
+// STRICTER than production rather than matching it.
+//
+// Production proxies /api through Vercel (see vercel.json), so the browser
+// sees one origin there. Dev talks to Django cross-origin, which keeps
+// exercising CORS, credentials and the CSRF header round trip. Code that
+// works cross-origin works same-origin; the reverse is not true, and it was
+// the reverse that produced a production-only CSRF bug earlier.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
