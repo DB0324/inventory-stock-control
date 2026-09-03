@@ -6,7 +6,8 @@ note on Item below, that omission is the whole point.
 
 from django.db import models
 from django.db.models.functions import Upper
-
+from django.conf import settings
+from apps.stock.models import ImmutableModel
 
 class Category(models.Model):
     """A maintained list, not free text typed per item (goal 2).
@@ -85,3 +86,59 @@ class Item(models.Model):
         # view of it. The constraint stops bad data; this stops surprises.
         self.sku = self.sku.upper()
         return super().save(*args, **kwargs)
+
+
+class ItemTimelineEvent(ImmutableModel):
+    """Goal 9: an item's history, which nobody can edit -- including managers.
+
+    Field changes and notes live in one table because the requirement says
+    notes are part of the same timeline. Two tables merged in a template would
+    render the same thing but break the moment you paginate.
+
+    old_value and new_value are text, not foreign keys. If a category is
+    renamed later, this entry must still show what the value was at the time.
+    A FK would rewrite history retroactively, which is what goal 9 forbids.
+    """
+
+    class EventType(models.TextChoices):
+        CREATED = "CREATED", "Created"
+        FIELD_CHANGE = "FIELD_CHANGE", "Field changed"
+        NOTE = "NOTE", "Note"
+        ARCHIVED = "ARCHIVED", "Archived"
+        RESTORED = "RESTORED", "Restored"
+
+    item = models.ForeignKey(
+        Item, on_delete=models.PROTECT, related_name="timeline", db_index=False,
+    )
+    event_type = models.CharField(max_length=16, choices=EventType.choices)
+    field_name = models.CharField(max_length=50, null=True, blank=True)
+    old_value = models.TextField(null=True, blank=True)
+    new_value = models.TextField(null=True, blank=True)
+    note_body = models.TextField(null=True, blank=True)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name="timeline_events",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "catalog_item_timeline_event"
+        ordering = ["-created_at", "-id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(event_type="FIELD_CHANGE", field_name__isnull=False,
+                             note_body__isnull=True)
+                    | models.Q(event_type="NOTE", note_body__isnull=False,
+                               field_name__isnull=True)
+                    | models.Q(event_type__in=["CREATED", "ARCHIVED", "RESTORED"])
+                ),
+                name="timeline_event_shape_valid",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["item", "-created_at"], name="timeline_item_time_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.event_type} on item {self.item_id}"

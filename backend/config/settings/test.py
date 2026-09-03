@@ -60,3 +60,11 @@ if _host not in _LOCAL_HOSTS and not env.bool("ALLOW_REMOTE_TEST_DB", default=Fa
         f"The suite creates and drops databases. If this really is a "
         f"throwaway host, set ALLOW_REMOTE_TEST_DB=1 to override."
     )
+
+# WhiteNoise warns about a missing staticfiles/ on every request. The
+# directory is created by collectstatic at deploy time and tests never serve
+# static files, so use Django's plain storage here instead.
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+}
