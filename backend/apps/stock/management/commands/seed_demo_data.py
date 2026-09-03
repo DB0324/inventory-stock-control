@@ -7,19 +7,30 @@ Every movement goes through stock_service. A seed that inserts ledger rows
 directly can build a state the application could never reach, and then the app
 looks fine against a world that cannot happen: negative stock, a transfer with
 one leg, an issue from a location nobody is assigned to.
+
+Timestamps are the subtle part. recorded_at is auto_now_add, so the history has
+to be backdated afterwards -- and the order that backdating produces is what a
+reviewer actually reads. See the long note in _record_movements.
 """
 
 import random
+from contextlib import contextmanager
 from datetime import timedelta
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.db import connection, transaction
 from django.utils import timezone
 
-from apps.catalog.models import Category, Item
+from apps.catalog.models import Category, Item, ItemTimelineEvent
 from apps.catalog.services import timeline_service as ts
-from apps.stock.models import Location, LocationAssignment, StockMovement
+from apps.stock.models import (
+    LedgerEntry,
+    Location,
+    LocationAssignment,
+    StockMovement,
+)
 from apps.stock.services import stock_service as ss
 from apps.stock.services.exceptions import InsufficientStock
 
@@ -59,12 +70,57 @@ ITEMS = [
     ("S-404", "Ear defenders", "Safety gear", "EA", 8),
 ]
 
+# What --reset is allowed to delete. Deliberately derived from the list above
+# rather than "everything", so the command can never take data it did not
+# create.
+SEEDED_SKUS = [row[0] for row in ITEMS]
+
 # Fixed, so a redeploy produces the same demo database rather than a new
 # random one every time. A reviewer comparing two visits should see the same
 # numbers.
 RANDOM_SEED = 20260903
 
 WEEKS_OF_HISTORY = 8
+HISTORY_DAYS = WEEKS_OF_HISTORY * 7
+
+# Every append-only table and the trigger guarding it, in one place -- so that
+# adding a fourth means editing one list, and so nothing can be disabled
+# without also being re-enabled.
+IMMUTABLE_TRIGGERS = [
+    ("stock_movement", "stock_movement_immutable"),
+    ("stock_ledger_entry", "stock_ledger_entry_immutable"),
+    ("catalog_item_timeline_event", "catalog_item_timeline_event_immutable"),
+]
+
+
+@contextmanager
+def immutability_disabled():
+    """Turn the append-only triggers off for the duration of the block.
+
+    This is the most dangerous code in the project, so it is written once and
+    reused rather than repeated at each call site.
+
+    The finally is not defensive habit. A disabled immutability trigger is the
+    worst state to leave a database in, because everything looks healthy and
+    nothing is actually protected -- the guarantee is gone and nothing says so.
+    Callers run inside an atomic block, so a crash would roll the ALTERs back
+    anyway, but relying on that alone would make the safety implicit.
+    """
+    with connection.cursor() as cur:
+        # Postgres refuses ALTER TABLE on a table with pending trigger events,
+        # and Django creates foreign keys as DEFERRABLE INITIALLY DEFERRED, so
+        # every insert so far in this transaction has left a check sitting in
+        # the queue. This forces them to run now and empties it. Without it the
+        # command dies with "cannot ALTER TABLE because it has pending trigger
+        # events" -- on every deploy, not only under test.
+        cur.execute("SET CONSTRAINTS ALL IMMEDIATE")
+        for table, trigger in IMMUTABLE_TRIGGERS:
+            cur.execute(f"ALTER TABLE {table} DISABLE TRIGGER {trigger}")
+        try:
+            yield cur
+        finally:
+            for table, trigger in IMMUTABLE_TRIGGERS:
+                cur.execute(f"ALTER TABLE {table} ENABLE TRIGGER {trigger}")
 
 
 class Command(BaseCommand):
@@ -76,6 +132,20 @@ class Command(BaseCommand):
             action="store_true",
             help="Seed even if items already exist. Adds movements on top.",
         )
+        parser.add_argument(
+            "--reset",
+            action="store_true",
+            help=(
+                "Delete previously seeded items and their history first, then "
+                "seed again. Only touches the SKUs this command owns."
+            ),
+        )
+        parser.add_argument(
+            "--i-know-this-is-production",
+            action="store_true",
+            dest="allow_production",
+            help="Required to use --reset when DEBUG is False.",
+        )
 
     @transaction.atomic
     def handle(self, *args, **options):
@@ -86,8 +156,16 @@ class Command(BaseCommand):
             self.stderr.write("No manager found. Run create_demo_users first.")
             return
 
-        if Item.objects.exists() and not options["force"]:
-            self.stdout.write("Items already exist; nothing to do.")
+        if options["reset"]:
+            self._reset(options)
+
+        # "Has this seed already run?", not "is the database non-empty?".
+        # Those differ the moment anything else lives in the table -- after a
+        # --reset that spared real data, the old check saw the survivor and
+        # skipped the reseed, so --reset deleted without restoring.
+        already_seeded = Item.objects.filter(sku__in=SEEDED_SKUS).exists()
+        if already_seeded and not options["force"]:
+            self.stdout.write("Demo items already exist; nothing to do.")
             return
 
         random.seed(RANDOM_SEED)
@@ -108,6 +186,7 @@ class Command(BaseCommand):
         items = self._create_items(categories, manager)
         self._record_movements(items, list(locations.values()), manager)
         self._add_timeline_colour(items, manager)
+        self._backdate_timeline(items)
 
         self.stdout.write(
             self.style.SUCCESS(
@@ -118,13 +197,50 @@ class Command(BaseCommand):
 
     # ------------------------------------------------------------------
 
+    def _reset(self, options):
+        """Delete previously seeded data so the seed can run cleanly again.
+
+        Two guards, because this deletes ledger rows with the immutability
+        triggers switched off and there is no undo:
+
+        1. It refuses to run with DEBUG=False unless explicitly overridden.
+           Production is exactly where a mistake here is permanent.
+        2. It only deletes the SKUs listed in this file. Deleting every item
+           would take real data with it if this ever ran somewhere it should
+           not -- and "somewhere it should not" is the entire scenario the
+           first guard exists for.
+        """
+        if not settings.DEBUG and not options["allow_production"]:
+            raise CommandError(
+                "--reset deletes ledger rows and refuses to run with "
+                "DEBUG=False. Pass --i-know-this-is-production if that is "
+                "genuinely what you intend."
+            )
+
+        items = Item.objects.filter(sku__in=SEEDED_SKUS)
+        item_ids = list(items.values_list("id", flat=True))
+        if not item_ids:
+            self.stdout.write("Nothing seeded to reset.")
+            return
+
+        with immutability_disabled():
+            # Order matters: all three relations are PROTECT, so children have
+            # to go before parents. Ledger entries reference movements, and
+            # both reference items.
+            LedgerEntry.objects.filter(item_id__in=item_ids).delete()
+            StockMovement.objects.filter(item_id__in=item_ids).delete()
+            ItemTimelineEvent.objects.filter(item_id__in=item_ids).delete()
+
+        items.delete()
+        self.stdout.write(f"Reset: removed {len(item_ids)} seeded item(s).")
+
     def _assign_staff(self, User, manager, locations):
         staff = User.objects.filter(role=User.Role.STAFF).order_by("id")
         if not staff.exists():
             return
         # First staff member: warehouse only. Second, if present: shop floor
         # and site store. Neither can act everywhere, which is the point --
-        # an assignment that covers everything demonstrates nothing.
+        # an assignment covering everything demonstrates nothing.
         sets = [["WH"], ["SF", "ST"]]
         for user, codes in zip(staff, sets):
             for code in codes:
@@ -158,12 +274,12 @@ class Command(BaseCommand):
 
     def _record_movements(self, items, locations, manager):
         """Eight weeks of activity, so the history has a shape rather than a
-        single spike. Opening receipts land first, then a mix of issues and
-        transfers spread across the period."""
+        single spike."""
         now = timezone.now()
         warehouse = locations[0]
-        schedule = []  # (movement_id, timestamp) pairs, filled as we go
-        recorded = []  # ids of the post-opening movements, in recording order
+        # Movement ids in the order they were recorded. That order is the one
+        # thing that must survive -- see the note below the loops.
+        recorded = []
 
         # Opening stock, deliberately uneven so that some items finish below
         # their reorder level and the low-stock filter has something to find.
@@ -181,21 +297,7 @@ class Command(BaseCommand):
                 quantity=opening,
                 note="Opening stock",
             )
-            # Dated *before* the activity window. Without this the opening
-            # receipt keeps its auto_now_add value of "now" and every item
-            # reads as having been issued weeks before the stock arrived --
-            # a history the application itself could never have produced,
-            # which is exactly what this command promises not to build.
-            schedule.append(
-                (
-                    movement.id,
-                    now
-                    - timedelta(
-                        days=WEEKS_OF_HISTORY * 7 + random.randint(1, 7),
-                        hours=random.randint(8, 17),
-                    ),
-                )
-            )
+            recorded.append(movement.id)
 
         for _ in range(140):
             item = random.choice(items)
@@ -233,90 +335,63 @@ class Command(BaseCommand):
                 # and transfers are legitimately refused. Skipping them is the
                 # correct response -- forcing them through would mean
                 # bypassing the guard the whole design rests on, and the demo
-                # database would then contain a state the app cannot produce.
+                # database would then hold a state the app cannot produce.
                 continue
             recorded.append(movement.id)
 
-        # Timestamps are assigned in *recording* order, not independently.
+        # Timestamps are assigned in *recording* order, and every movement --
+        # openings included -- goes through this single sorted assignment.
         #
-        # The service validated each movement against the balance as it stood
-        # at the moment it was recorded, so that sequence is causally sound.
-        # Handing each movement an unrelated random date destroys that: a
-        # transfer that put stock on the shop floor can end up dated after the
-        # issue that removed it, and replaying the ledger chronologically then
-        # shows a negative balance. The totals still come out right, which is
-        # exactly why it is easy to miss -- but the history a reviewer reads
-        # is the chronological one.
+        # stock_service validated each movement against the balance as it
+        # stood at the moment it was recorded, so that sequence is causally
+        # sound. Handing each movement an independent random date destroys
+        # that: a transfer that put stock on the shop floor can end up dated
+        # after the issue that removed it, and replaying the ledger
+        # chronologically then shows a negative balance. The totals still come
+        # out right -- sums do not care about order -- which is exactly why
+        # this is easy to miss, and why a SUM(delta) >= 0 test passes while
+        # the history says stock was issued from an empty shelf.
         #
-        # Sorting the dates and zipping them onto the movements in order keeps
-        # chronological order identical to recording order.
+        # Sorting the dates and zipping them onto the movements in order makes
+        # chronological order identical to recording order. Putting the
+        # openings through the same assignment, rather than pinning them to a
+        # separate earlier range, is what keeps them first: they were recorded
+        # first, so they take the earliest dates, with no constant that has to
+        # be kept in step with the window.
         dates = sorted(
             now
             - timedelta(
-                days=random.randint(0, WEEKS_OF_HISTORY * 7 - 1),
+                days=random.randint(0, HISTORY_DAYS),
                 # Business hours, so the timestamps read like a working day
                 # rather than a machine running at 3am.
                 hours=random.randint(8, 17),
+                minutes=random.randint(0, 59),
             )
             for _ in recorded
         )
-        schedule.extend(zip(recorded, dates))
-
-        self._backdate(schedule)
+        self._backdate(list(zip(recorded, dates)))
 
     def _backdate(self, schedule):
-        """Spread timestamps across the history window.
+        """Apply (movement_id, timestamp) pairs.
 
         recorded_at is auto_now_add, so it cannot be set through the service.
-        This is the one place in the project that disables an immutability
-        trigger, and it is confined to a seed command that only ever runs
-        against a demo database.
-
-        The try/finally is not defensive habit: a disabled immutability
-        trigger is the worst state to leave a database in, because everything
-        looks healthy and nothing is actually protected. Being inside
-        handle()'s atomic block means a crash would roll the ALTERs back
-        anyway, but relying on that alone would make the safety implicit.
+        Both the movement and its ledger entries move together -- occurred_at
+        is what every date-range report reads, so leaving it behind would make
+        the ledger and the movement list disagree.
         """
         if not schedule:
             return
 
-        with connection.cursor() as cur:
-            # Postgres refuses ALTER TABLE on a table with pending trigger
-            # events, and every insert above queued one: Django creates
-            # foreign keys as DEFERRABLE INITIALLY DEFERRED, so their checks
-            # are still sitting in the queue at this point in the transaction.
-            # This forces them to run now and empties it. Without this line
-            # the command dies with "cannot ALTER TABLE because it has pending
-            # trigger events" -- on every deploy, not just under test.
-            cur.execute("SET CONSTRAINTS ALL IMMEDIATE")
-            cur.execute(
-                "ALTER TABLE stock_movement DISABLE TRIGGER "
-                "stock_movement_immutable"
-            )
-            cur.execute(
-                "ALTER TABLE stock_ledger_entry DISABLE TRIGGER "
-                "stock_ledger_entry_immutable"
-            )
-            try:
-                for movement_id, when in schedule:
-                    cur.execute(
-                        "UPDATE stock_movement SET recorded_at = %s WHERE id = %s",
-                        [when, movement_id],
-                    )
-                    cur.execute(
-                        "UPDATE stock_ledger_entry SET occurred_at = %s "
-                        "WHERE movement_id = %s",
-                        [when, movement_id],
-                    )
-            finally:
+        with immutability_disabled() as cur:
+            for movement_id, when in schedule:
                 cur.execute(
-                    "ALTER TABLE stock_movement ENABLE TRIGGER "
-                    "stock_movement_immutable"
+                    "UPDATE stock_movement SET recorded_at = %s WHERE id = %s",
+                    [when, movement_id],
                 )
                 cur.execute(
-                    "ALTER TABLE stock_ledger_entry ENABLE TRIGGER "
-                    "stock_ledger_entry_immutable"
+                    "UPDATE stock_ledger_entry SET occurred_at = %s "
+                    "WHERE movement_id = %s",
+                    [when, movement_id],
                 )
 
     def _add_timeline_colour(self, items, manager):
@@ -345,3 +420,59 @@ class Command(BaseCommand):
             archived.is_archived = True
             archived.save(update_fields=["is_archived", "updated_at"])
             ts.record_archived(item=archived, actor=manager)
+
+    def _backdate_timeline(self, items):
+        """Give the item history the same treatment as the ledger.
+
+        Timeline events are auto_now_add too, so without this an item reads as
+        created today while its movements run back two months -- created after
+        its own history. Goal 9's page is the one asserting that this record
+        can be trusted, and an impossible creation date undercuts that at a
+        glance, before anyone reads a word of it.
+
+        Item.created_at moves as well, or the item header and its timeline
+        disagree about the same fact.
+        """
+        with immutability_disabled() as cur:
+            for item in items:
+                first_movement = (
+                    StockMovement.objects.filter(item=item)
+                    .order_by("recorded_at")
+                    .values_list("recorded_at", flat=True)
+                    .first()
+                )
+                if first_movement is None:
+                    continue
+
+                # The item has to exist before anything can move through it.
+                created_at = first_movement - timedelta(days=1, hours=2)
+                cur.execute(
+                    "UPDATE catalog_item SET created_at = %s WHERE id = %s",
+                    [created_at, item.id],
+                )
+
+                # Ordered by id, which is the order they were written. The
+                # CREATED event sits with the item; everything after it --
+                # field changes, notes, archiving -- is spread across the
+                # window so the timeline reads as activity over time rather
+                # than one burst on a single afternoon.
+                event_ids = list(
+                    ItemTimelineEvent.objects.filter(item=item)
+                    .order_by("id")
+                    .values_list("id", flat=True)
+                )
+                if not event_ids:
+                    continue
+
+                span = (timezone.now() - first_movement) / len(event_ids)
+                for position, event_id in enumerate(event_ids):
+                    when = (
+                        created_at
+                        if position == 0
+                        else first_movement + span * position
+                    )
+                    cur.execute(
+                        "UPDATE catalog_item_timeline_event "
+                        "SET created_at = %s WHERE id = %s",
+                        [when, event_id],
+                    )

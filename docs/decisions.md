@@ -62,3 +62,27 @@ Also affects tests: I can't delete rows in fixture teardown. pytest-django
 wraps each test in a transaction and rolls back, and a rollback isn't a
 delete, so the triggers don't fire. Only the concurrency tests need
 truncation.
+
+
+### A test that passed while the thing it tested was broken
+
+I had a test asserting `SUM(delta) >= 0` for every item and location — my
+"stock never goes negative" check. It passed. Meanwhile the seeded data had a
+warehouse whose first ever event was an issue of 2 units, leaving it at −2 for
+three weeks.
+
+Both were true at once because a sum doesn't care about order. The service had
+validated every movement against the balance *at the time it was recorded*,
+and then my seed handed each one an independent random date, so recording
+order and date order came apart. Final totals were still correct. Every
+intermediate state was not.
+
+The test I should have written replays the ledger in timestamp order and
+asserts the running balance never drops below zero. That version fails on the
+bad data, and it would also catch a real service-layer ordering bug rather
+than just this seeding artefact.
+
+What I take from it: `SUM(delta) >= 0` isn't "no shelf ever went negative", it
+is "no shelf is negative right now". I'd named it after the first and only
+tested the second, and I only noticed because I happened to look at the dates
+on a page.

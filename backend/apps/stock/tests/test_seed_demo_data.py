@@ -7,9 +7,10 @@ the triggers are back on afterwards.
 
 import pytest
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.db import connection
 
-from apps.catalog.models import Item
+from apps.catalog.models import Item, ItemTimelineEvent
 from apps.stock.models import LedgerEntry, StockMovement
 
 
@@ -80,6 +81,18 @@ def test_is_idempotent(seeded):
     assert Item.objects.count() == 25
 
 
+@pytest.mark.django_db
+def test_reset_reseeds_even_when_other_items_exist(db, settings, manager, category):
+    """The skip check asks whether this seed has run, not whether the table is
+    empty. Getting that wrong made --reset delete without restoring."""
+    settings.DEBUG = True
+    Item.objects.create(
+        sku="REAL-2", name="Not seeded", reorder_level=1, category=category
+    )
+    call_command("seed_demo_data", verbosity=0)
+    assert Item.objects.count() == 26
+
+
 def test_opening_stock_predates_everything_it_supplies(seeded):
     """Stock cannot be issued before it arrives.
 
@@ -116,3 +129,84 @@ def test_ledger_balance_never_goes_negative_in_time_order(seeded):
             f"item {entry.item_id} at location {entry.location_id} "
             f"hit {running[key]} on {entry.occurred_at}"
         )
+
+
+def test_items_are_created_before_their_first_movement(seeded):
+    """An item cannot have history from before it existed.
+
+    Cosmetic next to the ledger ordering -- no balance is wrong -- but goal
+    9's page is the one claiming this record is trustworthy, and "created
+    today" above two months of movements undercuts that at a glance.
+    """
+    for item in Item.objects.all():
+        first = (
+            StockMovement.objects.filter(item=item)
+            .order_by("recorded_at")
+            .values_list("recorded_at", flat=True)
+            .first()
+        )
+        if first is None:
+            continue
+        assert item.created_at < first, (
+            f"{item.sku}: created {item.created_at}, first movement {first}"
+        )
+
+        created_event = ItemTimelineEvent.objects.filter(
+            item=item, event_type="CREATED"
+        ).first()
+        if created_event:
+            assert created_event.created_at < first, (
+                f"{item.sku}: CREATED event is after the first movement"
+            )
+
+
+def test_timeline_events_are_spread_not_bunched(seeded):
+    """The item with a full history should read as activity over time."""
+    item = Item.objects.get(sku="A-100")
+    stamps = list(
+        ItemTimelineEvent.objects.filter(item=item)
+        .order_by("created_at")
+        .values_list("created_at", flat=True)
+    )
+    assert len(stamps) >= 4, stamps
+    # Not all on the same day, which is what auto_now_add produced before.
+    assert len({s.date() for s in stamps}) > 1, stamps
+
+
+@pytest.mark.django_db
+def test_reset_refuses_to_run_in_production(settings, manager):
+    """The guard on the most dangerous code in the project."""
+    call_command("seed_demo_data", verbosity=0)
+    settings.DEBUG = False
+
+    with pytest.raises(CommandError, match="DEBUG=False"):
+        call_command("seed_demo_data", "--reset", verbosity=0)
+
+    # And nothing was deleted on the way to refusing.
+    assert Item.objects.count() == 25
+
+
+@pytest.mark.django_db
+def test_reset_only_deletes_seeded_skus(db, settings, manager, category):
+    """Data this command did not create must survive a reset."""
+    # The suite runs with DEBUG=False, so --reset refuses by default. That is
+    # the guard doing its job; opt in here rather than weakening it.
+    settings.DEBUG = True
+    call_command("seed_demo_data", verbosity=0)
+    keeper = Item.objects.create(
+        sku="REAL-1", name="Not seeded", reorder_level=1, category=category
+    )
+
+    call_command("seed_demo_data", "--reset", verbosity=0)
+
+    assert Item.objects.filter(pk=keeper.pk).exists()
+    # Reset then reseeds, so the 25 are back -- plus the one it left alone.
+    assert Item.objects.count() == 26
+
+
+@pytest.mark.django_db
+def test_reset_leaves_triggers_enabled(db, settings, manager):
+    settings.DEBUG = True
+    call_command("seed_demo_data", verbosity=0)
+    call_command("seed_demo_data", "--reset", verbosity=0)
+    assert set(triggers_enabled().values()) == {"O"}
