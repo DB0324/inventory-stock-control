@@ -1,26 +1,14 @@
 # Plan
 
-Answer each of these, in your own words.
+## How I broke the work into sessions
 
-- How did you break the work into sessions?
-- What order did you build in, and why that order?
-- What did you estimate versus what it actually took?
-- What did you cut when you ran short?
-
-
-# Plan
-
-## How did you break the work into sessions?
-
-Not by time. I worked in phases, each with a condition that had to be true
-before moving on. So instead of "spend two hours on the ledger" it was "don't
-start the API until a transfer writes both entries, an overdraw leaves zero
-rows behind, and raw SQL can't update a movement."
-
-The phases:
+By phase, not by time. Each phase had a condition that had to be true before
+moving on — so instead of "spend two hours on the ledger" it was "don't start
+the API until a transfer writes both entries, an overdraw leaves zero rows
+behind, and raw SQL can't update a movement."
 
 0. Foundations — repo, settings, database, verify the host
-1. Ledger — models, constraints, triggers, stock_service, tests
+1. Ledger — models, constraints, triggers, `stock_service`, tests
 2. Auth and roles
 3. Items, categories, movements, audit timeline
 4. Search, filter, sort, paginate
@@ -29,111 +17,119 @@ The phases:
 7. Client
 8. Hardening and deploy
 
-I did it this way because time-boxing something like "get the ledger right"
-doesn't work. Either the concurrency test passes or it doesn't, and there's no
-useful sense in which it's 80% done at the two-hour mark.
+Time-boxing "get the ledger right" does not work. Either the concurrency test
+passes or it does not, and there is no useful sense in which it is 80% done at
+the two-hour mark.
 
-## What order did you build in, and why that order?
+## What order, and why
 
-Riskiest first. The rule was: if getting this wrong invalidates everything
-after it, do it now.
+Riskiest first: if getting this wrong invalidates everything after it, do it
+now.
 
 That put the ledger before anything else. If the transfer sign logic were
-wrong, or the negative-stock check didn't hold under concurrency, every
-feature built on top would inherit the error — and silently, because a wrong
-quantity doesn't raise an exception. It just shows a plausible number that's
-wrong forever.
+wrong, or the negative-stock check did not hold under concurrency, every
+feature built on top would inherit the error — silently, because a wrong
+quantity does not raise. It just shows a plausible number that is wrong
+forever.
 
 Two things I moved earlier than felt natural:
 
 **Verifying the database host before writing a model.** The design depends on
 `CREATE TRIGGER`, advisory locks, partial unique indexes and `pg_trgm`. If the
-host blocked triggers, the immutability guarantee would need a completely
-different approach, and that's a Phase 0 problem rather than something to find
-out in Phase 6. Took ten minutes and turned up a real bug: `pg_trgm` was
-installed on the dev branch but not production. Extensions in Neon are
-per-database, so branching doesn't carry across one installed after the branch
-point. That would have surfaced as a failed deploy much later.
+host blocked triggers, the immutability guarantee would need a different
+approach entirely — a Phase 0 problem, not a Phase 6 surprise. It took ten
+minutes and found a real bug: `pg_trgm` was installed on the dev branch but not
+production. Extensions in Neon are per-database, so branching does not carry
+across one installed after the branch point.
 
-**The custom User model in migration 0001.** Django's `AUTH_USER_MODEL` can't
-be changed once `auth` has migrated. I hit this directly — ran `migrate` too
-early, `auth_user` got created, and I had to reset the Neon branch and redo
-the migrations. Two minutes at that point. A rebuild if I'd found it in
-Phase 3.
+**The custom user model in migration 0001.** `AUTH_USER_MODEL` cannot be
+changed once `auth` has migrated. I hit this directly — ran `migrate` too
+early, `auth_user` was created, and I had to reset the Neon branch and redo the
+migrations. Two minutes at that point; a rebuild in Phase 3.
 
 Within each phase I wrote the service layer before the API, because the same
-operation has several entry points (web, CSV import, seed command) and they
-all have to enforce the same rules. Putting those rules in the views would
-have meant writing the negative-stock check three times and getting two of
-them right.
+operation has several entry points and they all have to enforce the same rules.
 
-## What did you estimate versus what it actually took?
+## Estimates versus actual
 
-I didn't estimate, and I'd rather say that than invent numbers afterwards. The
-brief suggested a 12-hour budget; I worked to phase gates instead, because
-"the ledger is correct" isn't something you can schedule.
+I did not estimate, and I would rather say so than invent numbers afterwards.
+The brief suggested a 12-hour budget; I worked to phase gates instead.
 
-What I can say is which parts took longer than I expected:
+**Slower than expected:**
 
-- **Verifying the constraints by hand in the SQL editor.** The editor stops at
-  the first error, so batching statements meant everything after a failure was
-  silently skipped. I kept getting results that looked like the constraints
-  had failed when actually nothing had run. Took a few attempts to work out
-  the harness was the problem, not the schema.
-- **The migration ordering mistake.** Not long to fix, but it cost a full
-  reset of the dev branch and a re-run of every migration.
-- **[add anything else that slowed you down]**
+- *Verifying constraints by hand in the SQL editor.* The editor stops at the
+  first error, so batching statements meant everything after a failure was
+  silently skipped. I kept getting results that looked like constraint failures
+  when in fact nothing had run.
+- *The migration ordering mistake.* Quick to fix, but it cost a full reset of
+  the dev branch.
+- *Cross-origin cookies.* Two separate bugs — `localhost` versus `127.0.0.1` in
+  development, and third-party cookie blocking in production incognito. Both
+  present as "login works, next request is anonymous", which points at
+  authentication rather than at the cookie.
 
-Quicker than expected:
+**Faster than expected:**
 
-- **The test suite, once it ran against a local Postgres container.** It went
-  from 90 seconds against Neon to under a second locally. That completely
-  changed how often I ran it — a 90-second suite is one you stop running, and
-  a suite you don't run is worse than none because it gives false confidence.
-- **[add anything else]**
+- *The test suite, once it ran against a local Postgres container.* It went
+  from 90 seconds against Neon to under a second locally. A 90-second suite is
+  one you stop running, and a suite you do not run is worse than none, because
+  it gives false confidence.
 
 The most useful thing I did for pace was verifying the host and deploying an
-empty app in Phase 0. Both felt like detours. Both saved more than they cost.
+empty app in Phase 0. Both felt like detours; both saved more than they cost.
 
-## What did you cut when you ran short?
+## What I cut
 
-Since I worked to gates rather than a clock, this became "what did I decide
-not to build," which is a different question but a more honest one.
+Working to gates rather than a clock made this "what did I decide not to
+build", which is a more honest question.
 
-- **Balance cache table.** It's the right answer at scale and the wrong one
-  now. It creates a second source of truth for the one number the spec says
-  must have only one, and every write path has to maintain it. I documented
-  the escalation path and a measured trigger instead — item list p95 over
-  300ms — rather than guessing when it's needed.
-- **Row-level security for location scoping.** Technically stronger than
-  checking in the service layer, but it needs a session variable set per
-  request and makes seeding awkward, and there's exactly one application
-  writing to this database.
-- **Hypothesis property tests.** I'd declared a `property` marker in
+- **Balance cache table** — ADR-009. Right at scale, wrong now: it recreates
+  the second source of truth the design exists to avoid. Documented with a
+  measured trigger instead of a guess.
+- **Row-level security for location scoping** — stronger in principle, but it
+  needs a session variable per request and there is one application writing to
+  this database.
+- **A background worker** — ADR-008. One process on the free tier, and imports
+  are small enough to run synchronously.
+- **Hypothesis property tests** — I had declared a `property` marker in
   `pytest.ini` without ever installing the dependency. I removed the marker
-  rather than leave something that looked implemented and wasn't.
-- **[anything else you dropped]**
+  rather than leave something that looked implemented and was not.
 
-One decision I reversed: I originally ruled out a background worker, because
-the free tier gives you a single process and an undeployable queue is worse
-than no queue. That was right under a time budget. Once the budget went away
-it stopped being right — synchronous CSV import has a hard ceiling, and
-holding an advisory lock across file I/O isn't safe anyway. Written up as
-ADR-008.
+## The last pass
 
-## What I'd do differently
+After the ten goals were done I went back over the system twice, and both
+passes found things that reading the code had not.
 
-Two things.
+The first was "check the edge cases for every goal", which turned up four
+untested requirements — per-location availability when the stock is at another
+location, archiving preserving history, pagination totals, and the location
+plus at-or-below-reorder combination — and one missing feature, the
+category-management screen.
 
-I'd verify the database host before writing anything, on any project, not just
-this one. Ten minutes in Phase 0 found the missing `pg_trgm` on production.
-That would otherwise have shown up as a failed deploy in Phase 8, when I'd be
-debugging three systems at once and unable to tell which was broken.
+The second was production hardening: login rate limiting, CSV injection in the
+export, a public health check returning psycopg's connection error verbatim,
+and no cache headers on authenticated responses. None of these are in the
+brief. All of them are the difference between a demo and something that could
+face the internet.
 
-And I'd stop doing correctness checks by hand much sooner. I spent a while
-probing constraints in the SQL editor, and the state kept drifting between
-runs because there's no setup or teardown. At one point I left both
-immutability triggers disabled without noticing — which is the worst state to
-leave the database in, because everything looks healthy and nothing is
-protected. The pytest version of the same checks runs in under a second and
-can't drift.
+Neither pass was speculative work. Every item was a real defect, and the
+health-check one was live on a public endpoint that names the database host,
+port, user and password failure in its error text.
+
+## What I would do differently
+
+**Verify the database host before writing anything.** Ten minutes in Phase 0
+found the missing `pg_trgm` on production, which would otherwise have appeared
+as a failed deploy in Phase 8, while debugging three systems at once.
+
+**Stop doing correctness checks by hand much sooner.** Probing constraints in
+the SQL editor let state drift between runs, and at one point I left both
+immutability triggers disabled without noticing — the worst state to leave the
+database in, because everything looks healthy and nothing is protected. The
+pytest version of the same checks runs in under a second and cannot drift.
+
+**Write the query-count tests earlier.** I added them at the end as a guard
+against future regressions, and the first run immediately failed on an N+1 that
+was already there: the staff screen fetched a user per assignment to render
+"granted by". Twenty-four queries where three would do. It had been live for
+days and no amount of reading the code had caught it.
