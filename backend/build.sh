@@ -6,10 +6,13 @@ set -o errexit
 pip install -r requirements.txt
 python manage.py collectstatic --no-input
 python manage.py migrate
+
+# The cache backs the login rate limiter, and the database cache needs its
+# table. Safe to repeat: it prints "already exists" and carries on.
+python manage.py createcachetable
+
 python manage.py create_demo_users
-# Idempotent: does nothing once items exist, so a redeploy will not
+
+# Idempotent: does nothing once the seeded SKUs exist, so a redeploy will not
 # double every quantity.
-# TEMPORARY: the first seed ran before the date-ordering fix, so production
-# holds a history where openings are dated last and one shelf goes negative.
-# Reverted to plain seed_demo_data immediately after this deploy.
 python manage.py seed_demo_data

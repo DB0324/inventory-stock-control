@@ -64,6 +64,32 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 25,
     "UNAUTHENTICATED_USER": None,
     "EXCEPTION_HANDLER": "apps.api.exception_handler.handler",
+    "DEFAULT_THROTTLE_RATES": {
+        # The per-account limit does the real work: five failures a minute
+        # against one email, which makes a password list useless while
+        # leaving room for someone who has forgotten which password they
+        # used.
+        #
+        # The per-address limit is deliberately looser, because it is the one
+        # that can be wrong. Getting the client address right behind two
+        # proxies depends on NUM_PROXIES below being correct for the
+        # deployment; if it is not, every request looks like it comes from
+        # the proxy and a tight limit would lock out all users at once. A
+        # loose limit degrades to "no per-IP protection" rather than to an
+        # outage, and the email limit is unaffected either way since it keys
+        # on the request body rather than on any header.
+        "login_ip": "30/min",
+        "login_email": "5/min",
+    },
+    # NUM_PROXIES tells DRF how many proxies sit in front of this app, so it
+    # reads the client address from the right position in X-Forwarded-For.
+    # Left unset, DRF trusts the leftmost value -- which the client sends and
+    # can therefore forge, making the per-IP limit trivially bypassable by
+    # varying one header. Vercel proxies /api to Render and Render has its own
+    # load balancer, so 2 is the expectation; it is an env var because that
+    # count is a property of the deployment, not of the code, and the only way
+    # to be sure of it is to look at a real X-Forwarded-For in the logs.
+    "NUM_PROXIES": env.int("NUM_PROXIES", default=2),
 }
 
 # DRF returns 403 for unauthenticated requests when SessionAuthentication is
@@ -85,6 +111,9 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # Last, so it runs on the way out after every other middleware has had its
+    # say and cannot have its headers overwritten by one of them.
+    "apps.api.middleware.ApiCacheControlMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -131,6 +160,42 @@ DATABASES = {"default": env.db_url_config(_db_url)}
 DATABASES["default"]["CONN_MAX_AGE"] = env.int("CONN_MAX_AGE", default=0)
 DATABASES["default"]["OPTIONS"] = {"sslmode": env("PGSSLMODE", default="require")}
 DATABASES["default"]["DISABLE_SERVER_SIDE_CURSORS"] = True
+
+# --- Cache ---------------------------------------------------------------
+# The database, not local memory. The cache backs the login rate limiter, and
+# LocMemCache is per-process: with several gunicorn workers each one would
+# keep its own counter, so "five attempts" would silently become five per
+# worker. A shared cache is the difference between a rate limit and the
+# appearance of one.
+#
+# Redis would be the usual answer and is a drop-in replacement here, but it is
+# another service to run. Postgres is already there, already shared by every
+# worker, and the traffic this cache sees is tiny -- a few rows per login
+# attempt. The table is created by `manage.py createcachetable`, which
+# build.sh runs on every deploy.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+        "LOCATION": "cache_table",
+    }
+}
+
+# --- Sessions and cookies ------------------------------------------------
+# Two weeks, refreshed on every request. Without SESSION_SAVE_EVERY_REQUEST
+# the expiry is absolute: someone using the system daily would still be
+# thrown out mid-task a fortnight after signing in. With it, the clock resets
+# while they are working and only runs down once they stop.
+SESSION_COOKIE_AGE = 60 * 60 * 24 * 14
+SESSION_SAVE_EVERY_REQUEST = True
+
+# Defence in depth rather than the main protection. The session cookie is
+# HttpOnly so script cannot read it at all; these stop it being sent along
+# with a cross-site request in the first place. prod.py raises both to
+# None/Secure only if the deployment is genuinely cross-origin -- ours is not
+# any more, because Vercel proxies /api (ADR-007).
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
 
 # --- Internationalisation ------------------------------------------------
 # USE_TZ stores timestamptz in UTC and converts on the way out; TIME_ZONE is

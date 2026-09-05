@@ -1,7 +1,13 @@
 """Creates the demo accounts the reviewer logs in with.
 
-Idempotent, because build.sh runs it on every deploy. Passwords come from the
-environment -- the credentials go in SUBMISSION.md, but not in the repository.
+Idempotent, because build.sh runs it on every deploy, and set_password runs
+every time -- so changing DEMO_PASSWORD in the host's environment and
+redeploying resets both accounts.
+
+The password itself comes from the environment rather than being written here.
+It is published in SUBMISSION.md, because a reviewer who cannot sign in cannot
+review anything; keeping it out of the source means rotating it does not need
+a commit.
 """
 
 import os

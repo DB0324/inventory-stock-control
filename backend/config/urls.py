@@ -14,21 +14,39 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
+import logging
+
 from django.contrib import admin
 from django.http import JsonResponse
 from django.urls import include, path
 
 
+logger = logging.getLogger(__name__)
+
+
 def healthz(request):
     """Liveness check. Touches the database, because a process that is up
-    but cannot reach Postgres is not healthy in any useful sense."""
+    but cannot reach Postgres is not healthy in any useful sense.
+
+    The failure body says nothing. psycopg's connection errors quote the
+    host, port, user and database name back at you -- "connection to server at
+    ep-xxxx.eu-central-1.aws.neon.tech (1.2.3.4), port 5432 failed: password
+    authentication failed for user ..." -- and this endpoint is public and
+    unauthenticated, so anyone can ask. An attacker who can make the database
+    briefly unreachable, or who simply catches a cold start, would be handed
+    the infrastructure layout for free.
+
+    The detail still exists; it goes to the application log, where the
+    operator can read it and the internet cannot.
+    """
     from django.db import connection
     try:
         with connection.cursor() as cur:
             cur.execute("SELECT 1")
         return JsonResponse({"status": "ok"})
-    except Exception as exc:
-        return JsonResponse({"status": "error", "detail": str(exc)}, status=503)
+    except Exception:
+        logger.exception("Health check failed: the database is unreachable")
+        return JsonResponse({"status": "error"}, status=503)
 
 
 urlpatterns = [

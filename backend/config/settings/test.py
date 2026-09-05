@@ -74,3 +74,17 @@ STORAGES = {
 
 MIDDLEWARE = [m for m in MIDDLEWARE  # noqa: F405
               if m != "whitenoise.middleware.WhiteNoiseMiddleware"]
+
+# LocMemCache, not the database cache base.py configures. Tests never create
+# the cache table, and a per-process cache is what the throttling tests want
+# anyway -- each one clears it in a fixture so the previous test's login
+# attempts cannot count against the next one.
+CACHES = {
+    "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}
+}
+
+# The real deployment sits behind two proxies and reads the client address
+# from X-Forwarded-For accordingly. The test client sets REMOTE_ADDR and no
+# forwarding header, so tell DRF there is nothing in front of it -- otherwise
+# every request throttles under the same empty key.
+REST_FRAMEWORK = {**REST_FRAMEWORK, "NUM_PROXIES": None}  # noqa: F405

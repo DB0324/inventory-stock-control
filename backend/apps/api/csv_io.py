@@ -189,6 +189,32 @@ def import_receipts(*, file, actor):
     return {"recorded": recorded, "failed": len(errors), "errors": errors}
 
 
+# Characters that make a spreadsheet treat a cell as a formula rather than
+# text. Tab and carriage return are in the list because Excel strips leading
+# whitespace before deciding, so putting one in front of "=" does not help.
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _safe_cell(value):
+    """Neutralise CSV injection.
+
+    Item and category names are free text typed by a manager, and they end up
+    in a file someone opens in Excel or Sheets. A value beginning with "=" is
+    a formula there, and formulas can reach out to a URL or hand the sheet's
+    contents to a remote server. This is where it has to be stopped -- by the
+    time the file is opened it is the spreadsheet's own documented behaviour,
+    not a bug anyone downstream can fix.
+
+    A leading apostrophe is the standard fix: both applications read it as
+    "treat the rest as text" and do not display it. Deliberately not a strip --
+    the value shown must still be the value stored, or an export stops being a
+    faithful record of what is in the system.
+    """
+    if isinstance(value, str) and value.startswith(_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
+
 def export_stock_position():
     """Every item's on-hand quantity by location, as CSV rows.
 
@@ -213,11 +239,13 @@ def export_stock_position():
         .order_by("item__sku", "location__code")
     )
     for row in rows:
-        yield [
+        # on_hand is an integer from an aggregate and cannot carry a formula,
+        # but it costs nothing to run every cell through the same door.
+        yield [_safe_cell(value) for value in (
             row["item__sku"],
             row["item__name"],
             row["item__category__name"],
             row["location__code"],
             row["location__name"],
             row["on_hand"],
-        ]
+        )]

@@ -1,11 +1,12 @@
 from django.contrib.auth import authenticate, login, logout
 from django.middleware.csrf import get_token
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from apps.api.serializers import LoginSerializer, MeSerializer
+from apps.api.throttling import LoginEmailThrottle, LoginIPThrottle
 
 
 @api_view(["GET"])
@@ -30,7 +31,14 @@ def csrf(request):
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
+@throttle_classes([LoginIPThrottle, LoginEmailThrottle])
 def login_view(request):
+    """The only unauthenticated write in the API, and therefore the only one
+    worth brute-forcing. Throttled per address and per account -- see
+    apps/api/throttling.py for why one limit is not enough.
+
+    Exceeding either returns 429 with a Retry-After header.
+    """
     serializer = LoginSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
 
