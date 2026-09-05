@@ -11,13 +11,17 @@ from rest_framework.response import Response
 from rest_framework.views import exception_handler as drf_handler
 
 from apps.stock.services.exceptions import (
-    InsufficientStock, ItemArchived, LocationNotAssigned,
+    EditConflict, InsufficientStock, ItemArchived, LocationNotAssigned,
 )
 
 
 def handler(exc, context):
     if isinstance(exc, InsufficientStock):
         return Response({"detail": str(exc), "code": "insufficient_stock"},
+                        status=status.HTTP_409_CONFLICT)
+
+    if isinstance(exc, EditConflict):
+        return Response({"detail": str(exc), "code": "edit_conflict"},
                         status=status.HTTP_409_CONFLICT)
 
     if isinstance(exc, LocationNotAssigned):

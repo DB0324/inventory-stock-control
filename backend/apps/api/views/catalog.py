@@ -4,6 +4,7 @@ Writes are manager-only (goal 1). Reads are open to any authenticated user,
 because staff need the item list to record movements against.
 """
 
+from django.db import transaction
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -17,6 +18,7 @@ from apps.api.serializers import (
 )
 from apps.catalog.models import Category, Item
 from apps.catalog.services import timeline_service as ts
+from apps.stock.services.exceptions import EditConflict
 
 
 class ManagerWritesMixin:
@@ -58,14 +60,35 @@ class ItemViewSet(ManagerWritesMixin, viewsets.ModelViewSet):
         return base.with_on_hand().order_by("name", "id")
 
     def perform_create(self, serializer):
+        # A brand new item has nothing to conflict with, so the field is
+        # meaningless here -- but it has to be discarded rather than ignored,
+        # or it reaches Item(**validated_data) as an unknown keyword.
+        serializer.validated_data.pop("expected_version", None)
         item = serializer.save()
         ts.record_created(item=item, actor=self.request.user)
 
+    @transaction.atomic
     def perform_update(self, serializer):
-        # Snapshot BEFORE the save. Reading the instance afterwards gives the
-        # new values twice, and you write events saying name: "X" -> "X".
-        before = ts.snapshot(serializer.instance)
-        item = serializer.save()
+        expected = serializer.validated_data.pop("expected_version", None)
+
+        # Re-read under a row lock. Without the lock this is a check-then-act:
+        # two requests could both read version 3, both find it matches, and
+        # both write version 4 -- which is the race the version field exists
+        # to close. The lock is held for the length of this method, not for
+        # the length of a human editing a form.
+        current = Item.objects.select_for_update().get(pk=serializer.instance.pk)
+
+        if expected is not None and expected != current.version:
+            raise EditConflict(
+                "Someone else changed this item while you were editing it. "
+                "Reload to see their changes, then apply yours."
+            )
+
+        # Snapshot BEFORE the save, and from the locked row rather than the
+        # serializer's copy. Reading the instance afterwards gives the new
+        # values twice, and you write events saying name: "X" -> "X".
+        before = ts.snapshot(current)
+        item = serializer.save(version=current.version + 1)
         ts.record_changes(item=item, actor=self.request.user, before=before)
 
     @action(detail=True, methods=["post"], permission_classes=[IsManager])

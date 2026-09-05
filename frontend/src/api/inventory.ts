@@ -1,6 +1,7 @@
 import { api } from "./client";
 import type {
-  Assignment, Category, DashboardData, ImportReport, Item, Location,
+  Account, Assignment, Category, DashboardData, ImportReport, Item, ItemInput,
+  Location, NewAccount,
   Movement,
   MovementResult, Paginated,
   Staff, TimelineEvent,
@@ -14,11 +15,17 @@ export const inventory = {
     api.patch<Category>(`/api/categories/${id}/`, { name }),
   locations: () => api.get<Paginated<Location>>("/api/locations/"),
 
+  accounts: () => api.get<Paginated<Account>>("/api/accounts/"),
+  createAccount: (body: NewAccount) =>
+    api.post<Account>("/api/accounts/", body),
+  setAccountActive: (id: number, active: boolean) =>
+    api.post<Account>(`/api/accounts/${id}/${active ? "reactivate" : "deactivate"}/`),
+
   items: (params: URLSearchParams) =>
     api.get<Paginated<Item>>(`/api/items/?${params}`),
   item: (id: number) => api.get<Item>(`/api/items/${id}/`),
-  createItem: (body: Partial<Item>) => api.post<Item>("/api/items/", body),
-  updateItem: (id: number, body: Partial<Item>) =>
+  createItem: (body: ItemInput) => api.post<Item>("/api/items/", body),
+  updateItem: (id: number, body: ItemInput) =>
     api.patch<Item>(`/api/items/${id}/`, body),
   archive: (id: number) => api.post<Item>(`/api/items/${id}/archive/`),
   restore: (id: number) => api.post<Item>(`/api/items/${id}/restore/`),

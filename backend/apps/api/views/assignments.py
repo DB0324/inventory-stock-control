@@ -6,6 +6,7 @@ change it, so there is nobody else with a reason to look.
 """
 
 from django.contrib.auth import get_user_model
+from django.db.models import Prefetch
 from rest_framework import mixins, viewsets
 
 from apps.api.permissions import IsManager
@@ -28,9 +29,22 @@ class StaffViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         User = get_user_model()
         return (
             User.objects.filter(role=User.Role.STAFF)
-            # Without prefetch this is one extra query per staff member, and
-            # the screen exists precisely to show every one of them at once.
-            .prefetch_related("location_assignments__location")
+            # One prefetch carrying its own select_related, rather than
+            # "location_assignments__location". The serializer renders both
+            # the location code and the grantor's name, so a prefetch that
+            # only covers location leaves assigned_by to be fetched one
+            # assignment at a time -- which is worse than a query per person,
+            # since a person can hold several. Joining both sides inside the
+            # prefetch makes the whole screen three queries regardless of how
+            # many staff or assignments there are.
+            .prefetch_related(
+                Prefetch(
+                    "location_assignments",
+                    queryset=LocationAssignment.objects.select_related(
+                        "location", "assigned_by"
+                    ),
+                )
+            )
             .order_by("full_name", "id")
         )
 

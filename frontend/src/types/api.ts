@@ -51,9 +51,17 @@ export interface Item {
   /** Always from a SQL aggregate. Never computed in the client -- the moment
    *  one screen sums a movement list, two screens disagree. */
   on_hand: number;
+  /** Optimistic concurrency token. Send it back as expected_version when
+   *  saving an edit and a stale write is refused with 409 rather than
+   *  silently overwriting whoever saved first. */
+  version: number;
   created_at: string;
   updated_at: string;
 }
+
+/** What the item form sends. `expected_version` is write-only on the server,
+ *  so it belongs here rather than on Item itself. */
+export type ItemInput = Partial<Item> & { expected_version?: number };
 
 export type MovementKind = "RECEIPT" | "ISSUE" | "TRANSFER" | "ADJUSTMENT";
 
@@ -106,6 +114,22 @@ export interface Staff {
   role: Role;
   is_active: boolean;
   assignments: Assignment[];
+}
+
+export interface Account {
+  id: number;
+  email: string;
+  full_name: string;
+  role: Role;
+  is_active: boolean;
+  date_joined: string;
+}
+
+export interface NewAccount {
+  email: string;
+  full_name: string;
+  role: Role;
+  password: string;
 }
 
 export interface WeeklyVolume {

@@ -39,6 +39,7 @@ export default function Layout() {
     ...(user?.is_manager
       ? [
           { to: "/locations", label: "Locations", badge: 0 },
+          { to: "/people", label: "People", badge: 0 },
           { to: "/data", label: "Import / export", badge: 0 },
         ]
       : []),

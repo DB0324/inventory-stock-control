@@ -4,7 +4,7 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import { ApiError } from "../api/client";
 import { inventory } from "../api/inventory";
-import type { Item } from "../types/api";
+import type { ItemInput } from "../types/api";
 
 /** Create and edit share one component because the fields are identical and
  *  the only differences are the heading, the endpoint, and whether the SKU can
@@ -58,7 +58,7 @@ export default function ItemForm() {
   }
 
   const save = useMutation({
-    mutationFn: (body: Partial<Item>) =>
+    mutationFn: (body: ItemInput) =>
       isEdit ? inventory.updateItem(itemId, body) : inventory.createItem(body),
     onSuccess: (item) => {
       queryClient.invalidateQueries({ queryKey: ["items"] });
@@ -74,6 +74,17 @@ export default function ItemForm() {
         // A field-level error is already shown beside its input, so only put
         // something at the top when there is nothing else to see.
         setFormError(error.fields ? "" : error.message);
+        // A conflict is not the user's mistake and cannot be fixed by editing
+        // a field. Clearing `loaded` lets the refetched item repopulate the
+        // form, so they see what the other person actually saved and can
+        // re-apply their change on top of it. Refetching without this would
+        // be worse than useless: the form would keep their values but pick up
+        // the new version number, and the next save would bury the other edit
+        // with no warning at all.
+        if (error.status === 409) {
+          setLoaded(false);
+          existing.refetch();
+        }
       } else {
         setFormError("Could not reach the server.");
       }
@@ -91,6 +102,13 @@ export default function ItemForm() {
       unit_of_measure: fields.unit_of_measure,
       reorder_level: Number(fields.reorder_level),
       category: Number(fields.category),
+      // The version this form was populated from, not whatever is current.
+      // That is the whole mechanism: if someone else saved in the meantime
+      // the server sees a stale number and refuses, rather than letting this
+      // save quietly bury their change.
+      ...(isEdit && existing.data
+        ? { expected_version: existing.data.version }
+        : {}),
     });
   }
 

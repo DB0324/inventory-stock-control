@@ -2,8 +2,8 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from apps.api.views import (
-    alerts, assignments, auth, catalog, dashboard, imports, locations,
-    movements,
+    accounts, alerts, assignments, auth, catalog, dashboard, imports,
+    locations, movements,
 )
 
 router = DefaultRouter()
@@ -12,6 +12,9 @@ router.register("items", catalog.ItemViewSet, basename="item")
 router.register("locations", locations.LocationViewSet, basename="location")
 # Goal 5. Manager-only, both of them.
 router.register("staff", assignments.StaffViewSet, basename="staff")
+# Who has an account at all, as opposed to who may act where. Manager-only,
+# and separate from "staff" because that list excludes managers by design.
+router.register("accounts", accounts.AccountViewSet, basename="account")
 router.register("assignments", assignments.AssignmentViewSet, basename="assignment")
 
 urlpatterns = [

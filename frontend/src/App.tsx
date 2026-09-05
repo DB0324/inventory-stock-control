@@ -3,6 +3,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { AuthProvider } from "./auth/AuthContext";
 import { RequireAuth, RequireManager } from "./auth/guards";
 import Layout from "./components/Layout";
+import Accounts from "./pages/Accounts";
 import Alerts from "./pages/Alerts";
 import Dashboard from "./pages/Dashboard";
 import ItemDetail from "./pages/ItemDetail";
@@ -39,6 +40,7 @@ export default function App() {
                   saves staff from loading a page that would 403. */}
               <Route element={<RequireManager />}>
                 <Route path="/locations" element={<Locations />} />
+              <Route path="/people" element={<Accounts />} />
                 <Route path="/data" element={<ImportExport />} />
               </Route>
             </Route>

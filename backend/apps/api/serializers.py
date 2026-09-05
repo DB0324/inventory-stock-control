@@ -79,14 +79,22 @@ class ItemSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     on_hand = serializers.IntegerField(read_only=True)
 
+    # Optional so that a client which does not care about conflicts -- the CSV
+    # importer, the seed command -- keeps working unchanged. A client that
+    # sends it gets last-write-wins turned off; one that does not gets the
+    # old behaviour, which is the right default for a bulk load where the
+    # file is deliberately the authority.
+    expected_version = serializers.IntegerField(write_only=True, required=False)
+
     class Meta:
         model = Item
         fields = [
             "id", "sku", "name", "description", "unit_of_measure",
             "reorder_level", "category", "category_name", "is_archived",
-            "on_hand", "created_at", "updated_at",
+            "on_hand", "version", "expected_version",
+            "created_at", "updated_at",
         ]
-        read_only_fields = ["is_archived", "created_at", "updated_at"]
+        read_only_fields = ["is_archived", "version", "created_at", "updated_at"]
 
 
 class TimelineEventSerializer(serializers.ModelSerializer):

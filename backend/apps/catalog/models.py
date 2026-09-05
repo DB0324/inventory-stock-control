@@ -103,6 +103,14 @@ class Item(models.Model):
         on_delete=models.PROTECT,
         related_name="items",
     )
+    # Optimistic concurrency. Two managers can have the same item open, and
+    # without this the second save silently discards the first -- the timeline
+    # records both edits, so the loss is auditable after the fact, but nobody
+    # is told at the time. Every update increments this and refuses if the
+    # client's copy is stale. Optimistic rather than a lock because item edits
+    # are rare and conflicts rarer; holding a row lock across a human filling
+    # in a form is the cure being worse than the disease.
+    version = models.PositiveIntegerField(default=1)
     is_archived = models.BooleanField(
         default=False,
         help_text=(
